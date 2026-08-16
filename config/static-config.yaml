@@ -1,0 +1,11 @@
+# Static configuration for the MemoryMesh Agent AgentCore Runtime
+# This file contains configuration that doesn't change between deployments
+
+aws:
+  region: us-east-1
+  # account_id is auto-detected during deployment
+
+runtime:
+  name: memorymesh_agent_workflow
+  role_name: memorymesh-agentcore-runtime-role
+  ecr_repo: memorymesh-agent-repo
