@@ -1,0 +1,40 @@
+# --- Orchestration ---
+langgraph==1.2.4
+
+# --- CockroachDB: the persistent memory layer ---
+# LangGraph checkpointer, chat message history, and distributed vector store
+# (C-SPANN index) all ship from this one package.
+langchain-cockroachdb==0.3.0
+psycopg[binary]>=3.1.18
+psycopg-pool>=3.2.1
+langchain-core==1.4.6
+langchain-community==0.4.2
+
+# Local embeddings (ONNX, no external API / no AWS Bedrock dependency) used to
+# embed case summaries before they are written into CockroachDB's VECTOR columns.
+fastembed>=0.4.2
+
+# --- Agent reasoning: Strands Agents, calling Anthropic's API directly ---
+strands-agents[anthropic]>=1.9.1,<2.0.0
+strands-agents-tools>=0.2.5
+mcp>=1.2.0
+
+# --- AWS: Bedrock AgentCore is the only AWS service used, for hosting ---
+bedrock-agentcore>=0.1.0
+bedrock-agentcore-starter-toolkit>=0.1.14
+boto3==1.43.28
+botocore>=1.43.28
+
+# --- App / API ---
+fastapi==0.115.13
+uvicorn==0.34.3
+streamlit==1.54.0
+python-dotenv==1.2.2
+pyyaml>=6.0.1
+
+# --- Data tooling reused from the market-surveillance sample ---
+pandas
+pandasql==0.7.3
+
+# --- Vector Memory Map (server/pca.py) ---
+numpy
