@@ -138,7 +138,7 @@ fi
 echo ""
 echo "🔨 Building Docker image (ARM64)..."
 cd "${PROJECT_DIR}"
-docker build --no-cache --platform linux/arm64 -t "${ECR_REPO}:latest" .
+docker build --no-cache --platform linux/amd64 -t "${ECR_REPO}:latest" .
 
 if [ $? -eq 0 ]; then
     echo "   ✅ Docker image built successfully"
