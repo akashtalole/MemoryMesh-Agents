@@ -349,6 +349,20 @@ aws iam put-role-policy --role-name "${TASK_ROLE_NAME}" \
 rm -f "$TASK_POLICY_FILE"
 echo "   ✅ Task role permissions attached"
 
+# ECS itself needs its service-linked role to exist before it can create
+# anything (cluster, service, load balancer, ...) — normally auto-created
+# on first use, but that auto-creation doesn't always kick in, in which
+# case create-express-gateway-service fails with "Unable to assume the
+# service linked role." Ensure it explicitly.
+if ! aws iam get-role --role-name AWSServiceRoleForECS >/dev/null 2>&1; then
+    echo "   Creating ECS service-linked role (first time ECS is used in this account)..."
+    aws iam create-service-linked-role --aws-service-name ecs.amazonaws.com >/dev/null 2>&1 || true
+    echo "   ✅ AWSServiceRoleForECS created"
+    NEW_ROLE_CREATED=1
+else
+    echo "   ✅ AWSServiceRoleForECS already exists"
+fi
+
 EXEC_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${EXEC_ROLE_NAME}"
 INFRA_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${INFRA_ROLE_NAME}"
 TASK_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${TASK_ROLE_NAME}"
