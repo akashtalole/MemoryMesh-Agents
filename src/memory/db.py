@@ -45,21 +45,36 @@ def _with_default_sslrootcert(conn_string: str) -> str:
     with no sslrootcert, which makes libpq look for a CA file at
     ~/.postgresql/root.crt — a file that exists on a developer's own machine
     (downloaded once from the Cloud console) but not in any container image
-    we ship. If COCKROACHDB_CLUSTER_ID is set, fetch that cluster's actual CA
-    cert (see _ensure_cluster_ca_cert) — required for clusters whose
-    certificate isn't publicly-trusted-CA-signed. Otherwise fall back to
-    sslrootcert=system, which is sufficient for clusters that are. Only
-    applies when the caller hasn't already set sslrootcert explicitly (e.g.
-    to a real file path).
+    we ship, unless one of these puts it there. In priority order:
+
+    1. sslrootcert already set explicitly (e.g. a real file path) — leave
+       it alone.
+    2. The file already exists at ~/.postgresql/root.crt — either baked
+       into the image at build time (see Dockerfile / Dockerfile.web's
+       COCKROACHDB_CLUSTER_ID build arg, populated via `curl ...
+       'https://cockroachlabs.cloud/clusters/<id>/cert'` in the same step
+       that creates the app user) or left by a previous
+       _ensure_cluster_ca_cert() call. This IS libpq's own default lookup
+       path, so there's nothing to add to the connection string.
+    3. COCKROACHDB_CLUSTER_ID is set — fetch that cluster's actual CA cert
+       at runtime instead (see _ensure_cluster_ca_cert). Needed for
+       clusters whose certificate isn't publicly-trusted-CA-signed, when
+       it wasn't baked into the image.
+    4. Otherwise, sslrootcert=system — sufficient for clusters that *are*
+       publicly-trusted-CA-signed.
     """
     parts = urlsplit(conn_string)
     query = dict(parse_qsl(parts.query, keep_blank_values=True))
-    if query.get("sslmode") in ("verify-full", "verify-ca") and "sslrootcert" not in query:
-        cluster_id = os.getenv("COCKROACHDB_CLUSTER_ID")
-        query["sslrootcert"] = _ensure_cluster_ca_cert(cluster_id) if cluster_id else "system"
-        parts = parts._replace(query=urlencode(query))
-        conn_string = urlunsplit(parts)
-    return conn_string
+    if query.get("sslmode") not in ("verify-full", "verify-ca") or "sslrootcert" in query:
+        return conn_string
+
+    if _DEFAULT_CERT_PATH.exists():
+        return conn_string
+
+    cluster_id = os.getenv("COCKROACHDB_CLUSTER_ID")
+    query["sslrootcert"] = _ensure_cluster_ca_cert(cluster_id) if cluster_id else "system"
+    parts = parts._replace(query=urlencode(query))
+    return urlunsplit(parts)
 
 
 def get_connection_string() -> str:

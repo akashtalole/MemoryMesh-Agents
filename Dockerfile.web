@@ -19,14 +19,35 @@ ENV UV_SYSTEM_PYTHON=1 \
     UV_NO_PROGRESS=1 \
     PYTHONUNBUFFERED=1
 
+# Optional: this CockroachDB Cloud cluster's ID, forwarded by
+# deploy-ecs-web.sh/buildspec-web.yml from .env's COCKROACHDB_CLUSTER_ID.
+# Bakes the cluster's CA cert into the image below so no runtime network
+# fetch is needed — see src/memory/db.py for the runtime-fetch/system-trust
+# fallbacks used when this build arg is left empty.
+ARG COCKROACHDB_CLUSTER_ID=
+
 COPY requirements.txt requirements.txt
 RUN uv pip install -r requirements.txt
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY . .
 COPY --from=web-build /app/web/dist ./web/dist
 
 RUN useradd -m -u 1000 appuser
+ENV HOME=/home/appuser
 USER appuser
+
+# Same cert the CockroachDB Cloud console's own connect instructions have
+# you fetch by hand — done here at build time instead so libpq's default
+# sslmode=verify-full lookup path (~/.postgresql/root.crt) is already
+# satisfied when the container starts. No-op if COCKROACHDB_CLUSTER_ID
+# wasn't supplied.
+RUN if [ -n "$COCKROACHDB_CLUSTER_ID" ]; then \
+        curl --create-dirs -fsSL -o "$HOME/.postgresql/root.crt" \
+            "https://cockroachlabs.cloud/clusters/${COCKROACHDB_CLUSTER_ID}/cert"; \
+    fi
 
 EXPOSE 8000
 CMD ["uvicorn", "server.main:app", "--host", "0.0.0.0", "--port", "8000"]

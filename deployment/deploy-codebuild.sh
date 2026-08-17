@@ -28,6 +28,24 @@ BASE_SETTINGS="${CONFIG_DIR}/static-config.yaml"
 GITHUB_REPO_URL="${GITHUB_REPO_URL:-https://github.com/akashtalole/MemoryMesh-Agents.git}"
 GITHUB_BRANCH="${GITHUB_BRANCH:-main}"
 
+# Reads a single key out of .env via python-dotenv's own parser — NOT bash
+# `source`, which executes .env as a shell script and silently mangles any
+# value containing $, `, ", #, spaces, or other shell-special characters.
+read_dotenv_var() {
+    python3 -c "
+import sys
+from dotenv import dotenv_values
+print(dotenv_values(sys.argv[1]).get(sys.argv[2]) or '')
+" "$1" "$2" 2>/dev/null || true
+}
+
+# Only needed as a CodeBuild-time build arg (bakes the cluster's CA cert
+# into the image — see Dockerfile) — not the same forwarding deploy-runtime.py
+# does afterwards for the AgentCore runtime's own environment.
+if [ -f "${PROJECT_DIR}/.env" ]; then
+    : "${COCKROACHDB_CLUSTER_ID:=$(read_dotenv_var "${PROJECT_DIR}/.env" COCKROACHDB_CLUSTER_ID)}"
+fi
+
 if command -v yq >/dev/null 2>&1; then
     REGION=$(yq eval '.aws.region' "${BASE_SETTINGS}")
     ECR_REPO=$(yq eval '.runtime.ecr_repo' "${BASE_SETTINGS}")
@@ -149,7 +167,8 @@ cat > "$PROJECT_DEF_FILE" <<EOF
     "environmentVariables": [
       { "name": "AWS_ACCOUNT_ID", "value": "${ACCOUNT_ID}" },
       { "name": "IMAGE_REPO_NAME", "value": "${ECR_REPO}" },
-      { "name": "AWS_DEFAULT_REGION", "value": "${REGION}" }
+      { "name": "AWS_DEFAULT_REGION", "value": "${REGION}" },
+      { "name": "COCKROACHDB_CLUSTER_ID", "value": "${COCKROACHDB_CLUSTER_ID:-}" }
     ]
   },
   "serviceRole": "${CB_ROLE_ARN}"

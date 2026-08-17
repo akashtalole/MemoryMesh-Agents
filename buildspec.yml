@@ -8,6 +8,8 @@ version: 0.2
 #
 # Expects these environment variables on the CodeBuild project:
 #   AWS_ACCOUNT_ID, AWS_DEFAULT_REGION, IMAGE_REPO_NAME
+#   COCKROACHDB_CLUSTER_ID (optional — bakes that cluster's CA cert into the
+#   image at build time; see Dockerfile and src/memory/db.py)
 
 phases:
   pre_build:
@@ -18,7 +20,7 @@ phases:
   build:
     commands:
       - echo "Building the AgentCore image (native ARM64 — no --platform flag needed)..."
-      - docker build -t "$IMAGE_REPO_NAME:latest" .
+      - docker build --build-arg COCKROACHDB_CLUSTER_ID="${COCKROACHDB_CLUSTER_ID:-}" -t "$IMAGE_REPO_NAME:latest" .
       - docker tag "$IMAGE_REPO_NAME:latest" "$REPO_URI:latest"
   post_build:
     commands:

@@ -102,9 +102,14 @@ echo "   AgentCore runtime ARN: ${RUNTIME_ARN}"
 # below. build_web_container_def.py re-reads .env itself (via python-dotenv,
 # never bash `source`, which mangles values with $, `, ", #, spaces...) and
 # forwards this along with every other RUNTIME_ENV_KEYS entry, so this is
-# just the early check, not the actual source of truth.
+# just the early check, not the actual source of truth. COCKROACHDB_CLUSTER_ID
+# is read here too, but for a different purpose — it needs to be a CodeBuild
+# project env var so buildspec-web.yml can pass it to `docker build
+# --build-arg`, baking that cluster's CA cert into the image (see
+# Dockerfile.web).
 if [ -f .env ]; then
     : "${COCKROACHDB_URL:=$(read_dotenv_var .env COCKROACHDB_URL)}"
+    : "${COCKROACHDB_CLUSTER_ID:=$(read_dotenv_var .env COCKROACHDB_CLUSTER_ID)}"
 fi
 if [ -z "${COCKROACHDB_URL:-}" ]; then
     echo "❌ COCKROACHDB_URL not set (checked .env and the shell) — the memory"
@@ -209,7 +214,8 @@ cat > "$PROJECT_DEF_FILE" <<EOF
     "environmentVariables": [
       { "name": "AWS_ACCOUNT_ID", "value": "${ACCOUNT_ID}" },
       { "name": "IMAGE_REPO_NAME", "value": "${ECR_REPO}" },
-      { "name": "AWS_DEFAULT_REGION", "value": "${REGION}" }
+      { "name": "AWS_DEFAULT_REGION", "value": "${REGION}" },
+      { "name": "COCKROACHDB_CLUSTER_ID", "value": "${COCKROACHDB_CLUSTER_ID:-}" }
     ]
   },
   "serviceRole": "${CB_ROLE_ARN}"
