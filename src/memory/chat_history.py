@@ -13,6 +13,8 @@ import os
 
 from langchain_cockroachdb import CockroachDBChatMessageHistory
 
+from src.memory.db import get_connection_string
+
 logger = logging.getLogger(__name__)
 
 TABLE_NAME = os.getenv("COCKROACHDB_CHAT_HISTORY_TABLE", "message_store")
@@ -21,7 +23,7 @@ TABLE_NAME = os.getenv("COCKROACHDB_CHAT_HISTORY_TABLE", "message_store")
 def get_session_history(session_id: str) -> CockroachDBChatMessageHistory:
     history = CockroachDBChatMessageHistory(
         session_id=session_id,
-        connection_string=os.environ["COCKROACHDB_URL"],
+        connection_string=get_connection_string(),
         table_name=TABLE_NAME,
     )
     return history

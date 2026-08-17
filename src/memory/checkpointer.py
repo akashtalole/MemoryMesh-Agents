@@ -14,6 +14,8 @@ from typing import Optional
 
 from langchain_cockroachdb import AsyncCockroachDBSaver
 
+from src.memory.db import get_connection_string
+
 logger = logging.getLogger(__name__)
 
 _saver_cm = None
@@ -31,7 +33,7 @@ async def build_checkpointer() -> AsyncCockroachDBSaver:
     if _checkpointer is not None:
         return _checkpointer
 
-    conn_string = os.environ["COCKROACHDB_URL"]
+    conn_string = get_connection_string()
     _saver_cm = AsyncCockroachDBSaver.from_conn_string(conn_string)
     _checkpointer = await _saver_cm.__aenter__()
     await _checkpointer.setup()

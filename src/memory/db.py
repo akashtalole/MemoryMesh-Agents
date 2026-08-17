@@ -10,10 +10,31 @@ langchain-cockroachdb API.
 import logging
 import os
 from functools import lru_cache
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from langchain_cockroachdb import CockroachDBEngine
 
 logger = logging.getLogger(__name__)
+
+
+def _with_default_sslrootcert(conn_string: str) -> str:
+    """CockroachDB Cloud connection strings default to sslmode=verify-full
+    with no sslrootcert, which makes libpq look for a CA file at
+    ~/.postgresql/root.crt — a file that exists on a developer's own machine
+    (downloaded once from the Cloud console) but not in any container image
+    we ship. CockroachDB Cloud Serverless/Basic clusters terminate TLS with a
+    publicly-trusted certificate, so the OS's own trust store is sufficient;
+    tell libpq to use it instead of failing with "root certificate file ...
+    does not exist". Only applies when the caller hasn't already set
+    sslrootcert explicitly (e.g. to a real file path).
+    """
+    parts = urlsplit(conn_string)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    if query.get("sslmode") in ("verify-full", "verify-ca") and "sslrootcert" not in query:
+        query["sslrootcert"] = "system"
+        parts = parts._replace(query=urlencode(query))
+        conn_string = urlunsplit(parts)
+    return conn_string
 
 
 def get_connection_string() -> str:
@@ -23,7 +44,7 @@ def get_connection_string() -> str:
             "COCKROACHDB_URL is not set. Point it at a CockroachDB Cloud cluster "
             "or a local 'cockroach demo' instance — see .env.example."
         )
-    return conn_string
+    return _with_default_sslrootcert(conn_string)
 
 
 @lru_cache(maxsize=1)
