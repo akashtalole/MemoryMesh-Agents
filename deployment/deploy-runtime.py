@@ -15,47 +15,101 @@ import os
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
+from dotenv import load_dotenv
+
+# Picks up ANTHROPIC_API_KEY/COCKROACHDB_URL/etc. from a local .env if one
+# exists; does nothing if the caller already exported them into the shell
+# (e.g. the CloudShell deploy wrapper) — load_dotenv() never overwrites
+# variables that are already set.
+load_dotenv()
+
 from src.config.config_manager import ConfigManager
+
+# Forwarded straight through to the AgentCore runtime's own environment via
+# environmentVariables= on create/update_agent_runtime — the same values
+# that would otherwise need to be pasted into the console by hand after
+# every deploy. Only forwarded if actually set (see _collect_runtime_env_vars).
+RUNTIME_ENV_KEYS = [
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_MODEL_ID",
+    "COCKROACHDB_URL",
+    "COCKROACHDB_POOL_SIZE",
+    "COCKROACHDB_POOL_MAX_OVERFLOW",
+    "COCKROACHDB_CHAT_HISTORY_TABLE",
+    "COCKROACHDB_CASE_MEMORY_TABLE",
+    "CASE_MEMORY_RECALL_K",
+    "CASE_MEMORY_SCORE_THRESHOLD",
+    "EMBEDDING_MODEL",
+    "EMBEDDING_DIM",
+    "COCKROACHDB_MCP_URL",
+    "COCKROACHDB_MCP_API_KEY",
+    "COCKROACHDB_MCP_CLUSTER_ID",
+    "CORS_ORIGINS",
+    "JUDGE_ACCESS_PASSWORD",
+    "JUDGE_SESSION_TTL_HOURS",
+    "COOKIE_SECURE",
+    "LOG_LEVEL",
+]
+
+
+def _collect_runtime_env_vars() -> dict:
+    """Every RUNTIME_ENV_KEYS entry that's actually set in the environment
+    (from .env or the shell) — never an empty string, never a key that was
+    simply unset, so a bare/incomplete .env can't wipe an existing runtime's
+    other env vars on redeploy (the dict is only attached to the API call
+    at all when non-empty; see main())."""
+    return {key: value for key in RUNTIME_ENV_KEYS if (value := os.getenv(key))}
 
 
 def main():
     """Main deployment function"""
-    
+
     # Initialize configuration manager
     config_manager = ConfigManager()
     static_config = config_manager.get_static_config()
     merged_config = config_manager.get_merged_config()
-    
+
     # Extract configuration values
     REGION = static_config['aws']['region']
     RUNTIME_NAME = static_config['runtime']['name']
     ECR_REPO = static_config['runtime']['ecr_repo']
-    
+
     # Get role ARN
     ROLE_NAME = static_config['runtime']['role_name']
-    
+
     # Get AWS account ID
     sts_client = boto3.client('sts', region_name=REGION)
     account_id = sts_client.get_caller_identity()['Account']
     ROLE_ARN = f"arn:aws:iam::{account_id}:role/{ROLE_NAME}"
-    
+
     # Construct ECR URI
     ECR_URI = f"{account_id}.dkr.ecr.{REGION}.amazonaws.com/{ECR_REPO}:latest"
-    
+
     print(f"🚀 Creating AgentCore Runtime...")
     print(f"   📝 Name: {RUNTIME_NAME}")
     print(f"   📦 Container: {ECR_URI}")
     print(f"   🔐 Role: {ROLE_ARN}")
     print(f"   🌍 Region: {REGION}")
-    
+
+    env_vars = _collect_runtime_env_vars()
+    if env_vars:
+        print(f"   🔧 Runtime env vars from .env/shell: {', '.join(sorted(env_vars))}")
+        if "ANTHROPIC_API_KEY" not in env_vars or "COCKROACHDB_URL" not in env_vars:
+            print("   ⚠️  ANTHROPIC_API_KEY and/or COCKROACHDB_URL not found — the deployed")
+            print("      runtime won't work until both are set (via .env, the shell, or the console).")
+    else:
+        print("   ℹ️  No known runtime env vars found in .env/shell — set ANTHROPIC_API_KEY")
+        print("      and COCKROACHDB_URL on the runtime yourself (console or update_agent_runtime)")
+        print("      before it'll actually work.")
+
     # Create bedrock-agentcore-control client
     control_client = boto3.client('bedrock-agentcore-control', region_name=REGION)
-    
+
     # Check if runtime already exists
     runtime_exists = False
     existing_runtime_arn = None
     existing_runtime_id = None
-    
+
     try:
         runtimes_response = control_client.list_agent_runtimes()
         for runtime in runtimes_response.get('agentRuntimes', []):
@@ -67,13 +121,13 @@ def main():
                 break
     except Exception as e:
         print(f"⚠️  Error checking existing runtimes: {e}")
-    
+
     try:
         if runtime_exists and existing_runtime_arn and existing_runtime_id:
             # Runtime exists — push the new container image via update_agent_runtime
             print(f"\n🔄 Updating runtime with new container image...")
 
-            control_client.update_agent_runtime(
+            update_kwargs = dict(
                 agentRuntimeId=existing_runtime_id,
                 agentRuntimeArtifact={
                     'containerConfiguration': {
@@ -83,6 +137,11 @@ def main():
                 roleArn=ROLE_ARN,
                 networkConfiguration={"networkMode": "PUBLIC"},
             )
+            if env_vars:
+                # Only attached when non-empty — an empty environmentVariables=
+                # on an update would wipe whatever's already set on the runtime.
+                update_kwargs["environmentVariables"] = env_vars
+            control_client.update_agent_runtime(**update_kwargs)
 
             # Wait for runtime to return to READY after the update
             print(f"⏳ Waiting for runtime to be READY...")
@@ -128,12 +187,12 @@ def main():
             print(f"🏷️  Runtime ARN: {existing_runtime_arn}")
             print(f"💾 ECR URI: {ECR_URI}")
             print(f"🔗 Endpoint ARN: {existing_endpoint_arn or 'Not found'}")
-            
+
         else:
             # Create new runtime - NO authorizer configuration
             print(f"\n🆕 Creating new runtime (no authentication)...")
-            
-            response = control_client.create_agent_runtime(
+
+            create_kwargs = dict(
                 agentRuntimeName=RUNTIME_NAME,
                 agentRuntimeArtifact={
                     'containerConfiguration': {
@@ -144,28 +203,31 @@ def main():
                 roleArn=ROLE_ARN
                 # NOTE: No authorizerConfiguration - simplified deployment
             )
-            
+            if env_vars:
+                create_kwargs["environmentVariables"] = env_vars
+            response = control_client.create_agent_runtime(**create_kwargs)
+
             runtime_arn = response['agentRuntimeArn']
             runtime_id = runtime_arn.split('/')[-1]
-            
+
             print(f"✅ AgentCore Runtime created!")
             print(f"🏷️  ARN: {runtime_arn}")
             print(f"🆔 Runtime ID: {runtime_id}")
-            
+
             # Wait for runtime to be READY
             print(f"\n⏳ Waiting for runtime to be READY...")
             max_wait = 600  # 10 minutes
             wait_time = 0
-            
+
             while wait_time < max_wait:
                 try:
                     status_response = control_client.get_agent_runtime(agentRuntimeId=runtime_id)
                     status = status_response.get('status')
                     print(f"   📊 Status: {status} ({wait_time}s)")
-                    
+
                     if status == 'READY':
                         print(f"✅ Runtime is READY!")
-                        
+
                         # Create DEFAULT endpoint
                         print(f"\n🔗 Creating DEFAULT endpoint...")
                         try:
@@ -176,7 +238,7 @@ def main():
                             endpoint_arn = endpoint_response['agentRuntimeEndpointArn']
                             print(f"✅ DEFAULT endpoint created!")
                             print(f"🏷️  Endpoint ARN: {endpoint_arn}")
-                            
+
                         except Exception as ep_error:
                             if "already exists" in str(ep_error):
                                 print(f"ℹ️  DEFAULT endpoint already exists, getting ARN...")
@@ -190,11 +252,11 @@ def main():
                                             endpoint_arn = endpoint.get('agentRuntimeEndpointArn')
                                             print(f"🏷️  Found endpoint ARN: {endpoint_arn}")
                                             break
-                                    
+
                                     if not endpoint_arn:
                                         endpoint_arn = f"{runtime_arn}/runtime-endpoint/DEFAULT"
                                         print(f"🔧 Constructed endpoint ARN: {endpoint_arn}")
-                                        
+
                                 except Exception as list_error:
                                     print(f"⚠️  Could not get endpoint ARN: {list_error}")
                                     endpoint_arn = f"{runtime_arn}/runtime-endpoint/DEFAULT"
@@ -202,7 +264,7 @@ def main():
                             else:
                                 print(f"❌ Error creating endpoint: {ep_error}")
                                 endpoint_arn = ""
-                        
+
                         # Update dynamic config with ARNs
                         config_manager.update_dynamic_config({
                             "runtime": {
@@ -211,30 +273,30 @@ def main():
                                 "endpoint_arn": endpoint_arn
                             }
                         })
-                        
+
                         print(f"\n📝 Configuration updated in config/dynamic-config.yaml")
                         break
-                        
+
                     elif status in ['FAILED', 'DELETING']:
                         print(f"❌ Runtime creation failed with status: {status}")
                         sys.exit(1)
-                    
+
                     time.sleep(15)
                     wait_time += 15
-                    
+
                 except Exception as e:
                     print(f"❌ Error checking status: {e}")
                     sys.exit(1)
-            
+
             if wait_time >= max_wait:
                 print(f"⚠️  Runtime creation taking longer than expected")
                 sys.exit(1)
-            
+
             print(f"\n🎉 Deployment Complete!")
             print(f"================================")
             print(f"Runtime ARN: {runtime_arn}")
             print(f"Endpoint ARN: {endpoint_arn}")
-    
+
     except Exception as e:
         print(f"❌ Error creating/updating runtime: {e}")
         import traceback

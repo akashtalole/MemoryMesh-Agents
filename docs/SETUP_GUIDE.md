@@ -237,6 +237,35 @@ One-time AWS cost note: this adds a CodeBuild project, billed per build
 minute (first 100 minutes/month free on `BUILD_GENERAL1_SMALL`) — negligible
 for occasional hackathon-scale deploys.
 
+**In a hurry, deploying from AWS CloudShell?**
+
+```bash
+git clone https://github.com/akashtalole/MemoryMesh-Agents.git
+cd MemoryMesh-Agents
+make deploy-cloudshell
+```
+
+`deployment/cloudshell_deploy.sh` does the whole thing in one command:
+installs Python deps, prompts for `ANTHROPIC_API_KEY` / `COCKROACHDB_URL` /
+an optional `JUDGE_ACCESS_PASSWORD` if you don't already have a `.env`,
+registers the GitHub source credential above if it's missing, then runs
+`deploy-codebuild.sh` — and now `deploy-runtime.py` forwards those `.env`
+values straight onto the runtime as `environmentVariables=` on
+create/update_agent_runtime, so there's no separate console trip afterward
+to set them by hand.
+
+**What this doesn't give you**, and the script says so at the end: the
+AgentCore Runtime itself isn't a browsable URL — it only accepts
+SigV4-signed requests, never a raw browser request. To actually hand judges
+something to click, you still need to run the FastAPI + React app
+(`server/`) somewhere public, pointed at this runtime (App Runner is the
+fastest AWS option; any small always-on host works too via `make web-build
+&& uvicorn server.main:app --host 0.0.0.0 --port 8000`). If you're tight on
+time, running `make dev` locally against the deployed runtime — or just
+demoing it locally end to end — is a perfectly fine judged demo; the AWS
+deployment proves the architecture regardless of whether it's also
+publicly hosted.
+
 ### Restricting access before deploying publicly
 
 If this deployment is reachable from the open internet, anyone who finds

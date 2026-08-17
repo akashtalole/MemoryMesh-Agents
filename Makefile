@@ -1,4 +1,4 @@
-.PHONY: help deploy deploy-codebuild destroy start-client prerequisites clean logs status init-memory seed-memory provision-cluster web-install web-dev web-build api-dev dev
+.PHONY: help deploy deploy-codebuild deploy-cloudshell destroy start-client prerequisites clean logs status init-memory seed-memory provision-cluster web-install web-dev web-build api-dev dev
 
 help:
 	@echo "MemoryMesh Agent — CockroachDB memory for LangGraph agents on AWS AgentCore"
@@ -19,6 +19,7 @@ help:
 	@echo "AWS AgentCore deployment:"
 	@echo "  make deploy            - Full AgentCore deployment (IAM + ECR + local Docker build + runtime)"
 	@echo "  make deploy-codebuild  - Same, but builds the ARM64 image on AWS CodeBuild (no local Docker)"
+	@echo "  make deploy-cloudshell - One-shot: prompts for .env, then runs deploy-codebuild end to end"
 	@echo "  make prerequisites     - Set up IAM role and ECR only"
 	@echo "  make destroy           - Delete all AgentCore resources"
 	@echo "  make logs              - Tail AgentCore runtime logs"
@@ -71,6 +72,10 @@ deploy:
 deploy-codebuild:
 	@echo "🚀 Running full deployment via AWS CodeBuild (no local Docker)..."
 	@cd deployment && ./deploy-codebuild.sh
+
+deploy-cloudshell:
+	@echo "🚀 Running one-shot deployment for AWS CloudShell..."
+	@bash deployment/cloudshell_deploy.sh
 
 prerequisites:
 	@echo "🔐 Setting up prerequisites only..."
