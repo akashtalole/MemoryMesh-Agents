@@ -24,7 +24,8 @@ RUN uv pip install -r requirements.txt
 
 COPY . .
 COPY --from=web-build /app/web/dist ./web/dist
-
+# Download CockroachDB CA certificate
+RUN mkdir -p /app/certs && curl --fail --silent --show-error --create-dirs -o /app/certs/root.crt 'https://cockroachlabs.cloud/clusters/2a8a467b-46cd-49e2-b3bc-4c92678b0385/cert'
 RUN useradd -m -u 1000 appuser
 USER appuser
 
