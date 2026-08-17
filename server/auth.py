@@ -97,7 +97,10 @@ def login(body: LoginRequest, response: Response):
     if not expected:
         return {"ok": True}
 
-    if not hmac.compare_digest(body.password, expected):
+    # Compare as bytes, not str: hmac.compare_digest refuses to compare str
+    # objects containing any non-ASCII character (raises TypeError), which a
+    # generated judge password can easily contain.
+    if not hmac.compare_digest(body.password.encode("utf-8"), expected.encode("utf-8")):
         logger.warning("Judge login: incorrect password attempt")
         raise HTTPException(status_code=401, detail="Incorrect password")
 
