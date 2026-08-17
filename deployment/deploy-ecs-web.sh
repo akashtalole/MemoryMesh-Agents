@@ -132,8 +132,8 @@ EOF
         --query 'Role.Arn' --output text)
     rm -f "$CB_TRUST_FILE"
     echo "   ✅ Role created: ${CB_ROLE_ARN}"
-    echo "   ⏳ Waiting for role to propagate (10 seconds)..."
-    sleep 10
+    echo "   ⏳ Waiting for role to propagate (20 seconds)..."
+    sleep 20
 else
     CB_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${CODEBUILD_ROLE_NAME}"
     echo "   ✅ Role exists: ${CB_ROLE_ARN}"
@@ -230,19 +230,48 @@ fi
 rm -f "$PROJECT_DEF_FILE"
 
 # === BUILD ===
+# A freshly-created CodeBuild service role's inline policy can take a little
+# while to propagate — CodeBuild sometimes tries (and fails) to assume it
+# before IAM has caught up, failing in the QUEUED phase with an
+# "does not allow AWS CodeBuild to create... CloudWatch Logs" access-denied
+# error. Retry a couple of times before treating it as a real failure.
 echo ""
 echo "🔨 Building the web app image (native x86_64 — no local Docker involved)..."
-BUILD_ID=$(aws codebuild start-build --project-name "${CODEBUILD_PROJECT}" --region "${REGION}" \
-    --source-version "${GITHUB_BRANCH}" --query 'build.id' --output text)
-echo "   Build ID: ${BUILD_ID}"
 
-STATUS="IN_PROGRESS"
-while [ "$STATUS" = "IN_PROGRESS" ]; do
-    sleep 10
-    STATUS=$(aws codebuild batch-get-builds --ids "${BUILD_ID}" --region "${REGION}" \
-        --query 'builds[0].buildStatus' --output text)
-    echo "   Status: ${STATUS}"
+MAX_ATTEMPTS=3
+ATTEMPT=1
+STATUS=""
+BUILD_ID=""
+while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+    BUILD_ID=$(aws codebuild start-build --project-name "${CODEBUILD_PROJECT}" --region "${REGION}" \
+        --source-version "${GITHUB_BRANCH}" --query 'build.id' --output text)
+    echo "   Build ID: ${BUILD_ID} (attempt ${ATTEMPT}/${MAX_ATTEMPTS})"
+
+    STATUS="IN_PROGRESS"
+    while [ "$STATUS" = "IN_PROGRESS" ]; do
+        sleep 10
+        STATUS=$(aws codebuild batch-get-builds --ids "${BUILD_ID}" --region "${REGION}" \
+            --query 'builds[0].buildStatus' --output text)
+        echo "   Status: ${STATUS}"
+    done
+
+    if [ "$STATUS" = "SUCCEEDED" ]; then
+        break
+    fi
+
+    FAIL_MSG=$(aws codebuild batch-get-builds --ids "${BUILD_ID}" --region "${REGION}" \
+        --query 'builds[0].phases[?phaseStatus!=`SUCCEEDED` && phaseStatus!=`IN_PROGRESS`] | [0].contexts[0].message' \
+        --output text 2>/dev/null || true)
+    if [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ] && echo "$FAIL_MSG" | grep -qi "does not allow AWS CodeBuild\|not authorized\|AccessDenied"; then
+        echo "   ⚠️  Looks like an IAM propagation delay: ${FAIL_MSG}"
+        echo "   ⏳ Waiting 20s and retrying..."
+        sleep 20
+    else
+        break
+    fi
+    ATTEMPT=$((ATTEMPT + 1))
 done
+
 if [ "$STATUS" != "SUCCEEDED" ]; then
     echo ""
     echo "❌ CodeBuild build ${STATUS}"
@@ -252,6 +281,8 @@ if [ "$STATUS" != "SUCCEEDED" ]; then
         --query 'builds[0].logs.streamName' --output text)
     echo "   View logs:"
     echo "   aws logs get-log-events --region ${REGION} --log-group-name ${LOG_GROUP} --log-stream-name ${LOG_STREAM}"
+    echo "   Or see exactly which phase failed and why:"
+    echo "   aws codebuild batch-get-builds --ids ${BUILD_ID} --region ${REGION} --query 'builds[0].phases'"
     exit 1
 fi
 echo "   ✅ Build succeeded — image pushed to ECR"
