@@ -399,15 +399,7 @@ echo ""
 echo "🚀 Deploying to Amazon ECS Express Mode..."
 SERVICE_ARN="arn:aws:ecs:${REGION}:${ACCOUNT_ID}:service/default/${SERVICE_NAME}"
 
-if aws ecs describe-express-gateway-service --service-arn "${SERVICE_ARN}" --region "${REGION}" >/dev/null 2>&1; then
-    echo "   Updating existing service..."
-    aws ecs update-express-gateway-service \
-        --service-arn "${SERVICE_ARN}" \
-        --region "${REGION}" \
-        --primary-container "file://${PRIMARY_CONTAINER_FILE}" \
-        --monitor-resources
-else
-    echo "   Creating new service..."
+create_web_service() {
     aws ecs create-express-gateway-service \
         --service-name "${SERVICE_NAME}" \
         --region "${REGION}" \
@@ -417,6 +409,42 @@ else
         --primary-container "file://${PRIMARY_CONTAINER_FILE}" \
         --health-check-path "/api/health" \
         --monitor-resources
+}
+
+# Like classic ECS services, a deleted/failed Express service can stay
+# describable for a while with a non-ACTIVE status (INACTIVE/DRAINING) —
+# describe succeeding isn't proof update-express-gateway-service will
+# accept it. Check the actual status, not just whether describe worked.
+SERVICE_STATUS=$(aws ecs describe-express-gateway-service --service-arn "${SERVICE_ARN}" \
+    --region "${REGION}" --query 'service.status' --output text 2>/dev/null || echo "")
+
+if [ "$SERVICE_STATUS" = "ACTIVE" ]; then
+    echo "   Updating existing service..."
+    UPDATE_ERR="$(mktemp)"
+    if aws ecs update-express-gateway-service \
+        --service-arn "${SERVICE_ARN}" \
+        --region "${REGION}" \
+        --primary-container "file://${PRIMARY_CONTAINER_FILE}" \
+        --monitor-resources 2>"${UPDATE_ERR}"; then
+        rm -f "${UPDATE_ERR}"
+    elif grep -qi "resource not found" "${UPDATE_ERR}"; then
+        echo "   ⚠️  ECS reports this service as gone despite describing ACTIVE"
+        echo "      moments ago (a stale record from an earlier partial"
+        echo "      deploy) — creating it fresh instead."
+        rm -f "${UPDATE_ERR}"
+        create_web_service
+    else
+        cat "${UPDATE_ERR}" >&2
+        rm -f "${UPDATE_ERR}"
+        exit 1
+    fi
+else
+    if [ -n "$SERVICE_STATUS" ] && [ "$SERVICE_STATUS" != "ACTIVE" ]; then
+        echo "   Existing service record is ${SERVICE_STATUS}, not ACTIVE — creating fresh..."
+    else
+        echo "   Creating new service..."
+    fi
+    create_web_service
 fi
 rm -f "$PRIMARY_CONTAINER_FILE"
 
