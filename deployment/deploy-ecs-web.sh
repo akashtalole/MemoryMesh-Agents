@@ -323,11 +323,11 @@ EOF
 echo ""
 echo "🔐 Ensuring ECS Express Mode IAM roles..."
 
-ensure_role "${EXEC_ROLE_NAME}" "ecs-tasks.amazonaws.com" "ECS task execution role (pulls images, writes logs) — shared across ECS services in this account"
+ensure_role "${EXEC_ROLE_NAME}" "ecs-tasks.amazonaws.com" "ECS task execution role (pulls images, writes logs), shared across ECS services in this account"
 aws iam attach-role-policy --role-name "${EXEC_ROLE_NAME}" \
     --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy 2>/dev/null || true
 
-ensure_role "${INFRA_ROLE_NAME}" "ecs.amazonaws.com" "ECS Express Mode infrastructure provisioning role — shared across Express Mode services in this account"
+ensure_role "${INFRA_ROLE_NAME}" "ecs.amazonaws.com" "ECS Express Mode infrastructure provisioning role, shared across Express Mode services in this account"
 aws iam attach-role-policy --role-name "${INFRA_ROLE_NAME}" \
     --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRoleforExpressGatewayServices 2>/dev/null || true
 
