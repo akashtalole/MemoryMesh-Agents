@@ -47,6 +47,18 @@ print(data if data is not None else '')
 " "$1" "$2"
 }
 
+# Reads a single key out of .env via python-dotenv's own parser — NOT bash
+# `source`, which executes .env as a shell script and silently mangles any
+# value containing $, `, ", #, spaces, or other shell-special characters
+# (a real problem for a password value).
+read_dotenv_var() {
+    python3 -c "
+import sys
+from dotenv import dotenv_values
+print(dotenv_values(sys.argv[1]).get(sys.argv[2]) or '')
+" "$1" "$2" 2>/dev/null || true
+}
+
 REGION=$(read_yaml "$BASE_SETTINGS" "aws.region")
 ECR_REPO=$(read_yaml "$BASE_SETTINGS" "web.ecr_repo")
 SERVICE_NAME=$(read_yaml "$BASE_SETTINGS" "web.service_name")
@@ -85,13 +97,16 @@ echo "   ECS Express service: ${SERVICE_NAME}"
 echo "   Container port: ${PORT}"
 echo "   AgentCore runtime ARN: ${RUNTIME_ARN}"
 
-# Load .env for COCKROACHDB_URL / JUDGE_ACCESS_PASSWORD / etc — optional,
-# shell env vars work too if you're setting these another way.
+# Load .env for COCKROACHDB_URL / JUDGE_ACCESS_PASSWORD / etc, via Python's
+# dotenv parser rather than bash `source` — sourcing .env as a shell script
+# silently mangles any value containing $, `, ", #, spaces, or other
+# shell-special characters (a real problem for a password). Real shell env
+# vars, if you're setting these that way instead, take priority.
 if [ -f .env ]; then
-    set -a
-    # shellcheck disable=SC1091
-    source .env
-    set +a
+    : "${COCKROACHDB_URL:=$(read_dotenv_var .env COCKROACHDB_URL)}"
+    : "${JUDGE_ACCESS_PASSWORD:=$(read_dotenv_var .env JUDGE_ACCESS_PASSWORD)}"
+    : "${JUDGE_SESSION_TTL_HOURS:=$(read_dotenv_var .env JUDGE_SESSION_TTL_HOURS)}"
+    : "${COOKIE_SECURE:=$(read_dotenv_var .env COOKIE_SECURE)}"
 fi
 if [ -z "${COCKROACHDB_URL:-}" ]; then
     echo "❌ COCKROACHDB_URL not set (checked .env and the shell) — the memory"
