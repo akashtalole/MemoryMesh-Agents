@@ -14,7 +14,8 @@ ENV UV_SYSTEM_PYTHON=1 \
 COPY requirements.txt requirements.txt
 RUN uv pip install -r requirements.txt
 RUN uv pip install aws-opentelemetry-distro==0.18.0
-
+# Download CockroachDB CA certificate
+RUN mkdir -p /app/certs && curl --fail --silent --show-error --create-dirs -o /app/certs/root.crt 'https://cockroachlabs.cloud/clusters/2a8a467b-46cd-49e2-b3bc-4c92678b0385/cert'
 RUN useradd -m -u 1000 bedrock_agentcore
 USER bedrock_agentcore
 
