@@ -104,6 +104,7 @@ echo "   AgentCore runtime ARN: ${RUNTIME_ARN}"
 # vars, if you're setting these that way instead, take priority.
 if [ -f .env ]; then
     : "${COCKROACHDB_URL:=$(read_dotenv_var .env COCKROACHDB_URL)}"
+    : "${COCKROACHDB_CLUSTER_ID:=$(read_dotenv_var .env COCKROACHDB_CLUSTER_ID)}"
     : "${JUDGE_ACCESS_PASSWORD:=$(read_dotenv_var .env JUDGE_ACCESS_PASSWORD)}"
     : "${JUDGE_SESSION_TTL_HOURS:=$(read_dotenv_var .env JUDGE_SESSION_TTL_HOURS)}"
     : "${COOKIE_SECURE:=$(read_dotenv_var .env COOKIE_SECURE)}"
@@ -390,11 +391,11 @@ fi
 # === Container definition, built via python so special characters in
 #     COCKROACHDB_URL (&, ?, =) can't break the JSON ===
 PRIMARY_CONTAINER_FILE="$(mktemp)"
-python3 - "$IMAGE_URI" "$PORT" "$COCKROACHDB_URL" "$RUNTIME_ARN" "${JUDGE_ACCESS_PASSWORD:-}" "${JUDGE_SESSION_TTL_HOURS:-168}" "${COOKIE_SECURE:-true}" > "$PRIMARY_CONTAINER_FILE" <<'PYEOF'
+python3 - "$IMAGE_URI" "$PORT" "$COCKROACHDB_URL" "$RUNTIME_ARN" "${JUDGE_ACCESS_PASSWORD:-}" "${JUDGE_SESSION_TTL_HOURS:-168}" "${COOKIE_SECURE:-true}" "${COCKROACHDB_CLUSTER_ID:-}" > "$PRIMARY_CONTAINER_FILE" <<'PYEOF'
 import json
 import sys
 
-image, port, db_url, runtime_arn, judge_pw, ttl, cookie_secure = sys.argv[1:8]
+image, port, db_url, runtime_arn, judge_pw, ttl, cookie_secure, cluster_id = sys.argv[1:9]
 env = [
     {"name": "COCKROACHDB_URL", "value": db_url},
     {"name": "AGENTCORE_RUNTIME_ARN", "value": runtime_arn},
@@ -404,6 +405,8 @@ env = [
 ]
 if judge_pw:
     env.append({"name": "JUDGE_ACCESS_PASSWORD", "value": judge_pw})
+if cluster_id:
+    env.append({"name": "COCKROACHDB_CLUSTER_ID", "value": cluster_id})
 print(json.dumps({"image": image, "containerPort": int(port), "environment": env}))
 PYEOF
 

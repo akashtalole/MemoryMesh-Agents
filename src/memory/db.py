@@ -9,12 +9,35 @@ langchain-cockroachdb API.
 
 import logging
 import os
+import urllib.request
 from functools import lru_cache
+from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from langchain_cockroachdb import CockroachDBEngine
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_CERT_PATH = Path.home() / ".postgresql" / "root.crt"
+
+
+def _ensure_cluster_ca_cert(cluster_id: str) -> str:
+    """Downloads (once) and caches this CockroachDB Cloud cluster's CA cert
+    to ~/.postgresql/root.crt — the same file the Cloud console's own
+    connect instructions have you fetch by hand with
+    `curl --create-dirs -o $HOME/.postgresql/root.crt
+    'https://cockroachlabs.cloud/clusters/<cluster-id>/cert'`. Done here at
+    runtime instead of baked into the Docker image, so the exact same image
+    works for any cluster (dev, prod, a rotated cluster) via
+    COCKROACHDB_CLUSTER_ID alone, no rebuild — consistent with every other
+    credential in this project being injected at runtime, never baked in.
+    """
+    if not _DEFAULT_CERT_PATH.exists():
+        _DEFAULT_CERT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        url = f"https://cockroachlabs.cloud/clusters/{cluster_id}/cert"
+        logger.info(f"Downloading CockroachDB Cloud CA cert for cluster {cluster_id}")
+        urllib.request.urlretrieve(url, _DEFAULT_CERT_PATH)
+    return str(_DEFAULT_CERT_PATH)
 
 
 def _with_default_sslrootcert(conn_string: str) -> str:
@@ -22,16 +45,18 @@ def _with_default_sslrootcert(conn_string: str) -> str:
     with no sslrootcert, which makes libpq look for a CA file at
     ~/.postgresql/root.crt — a file that exists on a developer's own machine
     (downloaded once from the Cloud console) but not in any container image
-    we ship. CockroachDB Cloud Serverless/Basic clusters terminate TLS with a
-    publicly-trusted certificate, so the OS's own trust store is sufficient;
-    tell libpq to use it instead of failing with "root certificate file ...
-    does not exist". Only applies when the caller hasn't already set
-    sslrootcert explicitly (e.g. to a real file path).
+    we ship. If COCKROACHDB_CLUSTER_ID is set, fetch that cluster's actual CA
+    cert (see _ensure_cluster_ca_cert) — required for clusters whose
+    certificate isn't publicly-trusted-CA-signed. Otherwise fall back to
+    sslrootcert=system, which is sufficient for clusters that are. Only
+    applies when the caller hasn't already set sslrootcert explicitly (e.g.
+    to a real file path).
     """
     parts = urlsplit(conn_string)
     query = dict(parse_qsl(parts.query, keep_blank_values=True))
     if query.get("sslmode") in ("verify-full", "verify-ca") and "sslrootcert" not in query:
-        query["sslrootcert"] = "system"
+        cluster_id = os.getenv("COCKROACHDB_CLUSTER_ID")
+        query["sslrootcert"] = _ensure_cluster_ca_cert(cluster_id) if cluster_id else "system"
         parts = parts._replace(query=urlencode(query))
         conn_string = urlunsplit(parts)
     return conn_string
