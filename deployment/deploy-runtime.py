@@ -24,33 +24,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from src.config.config_manager import ConfigManager
-
-# Forwarded straight through to the AgentCore runtime's own environment via
-# environmentVariables= on create/update_agent_runtime — the same values
-# that would otherwise need to be pasted into the console by hand after
-# every deploy. Only forwarded if actually set (see _collect_runtime_env_vars).
-RUNTIME_ENV_KEYS = [
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_MODEL_ID",
-    "COCKROACHDB_URL",
-    "COCKROACHDB_CLUSTER_ID",
-    "COCKROACHDB_POOL_SIZE",
-    "COCKROACHDB_POOL_MAX_OVERFLOW",
-    "COCKROACHDB_CHAT_HISTORY_TABLE",
-    "COCKROACHDB_CASE_MEMORY_TABLE",
-    "CASE_MEMORY_RECALL_K",
-    "CASE_MEMORY_SCORE_THRESHOLD",
-    "EMBEDDING_MODEL",
-    "EMBEDDING_DIM",
-    "COCKROACHDB_MCP_URL",
-    "COCKROACHDB_MCP_API_KEY",
-    "COCKROACHDB_MCP_CLUSTER_ID",
-    "CORS_ORIGINS",
-    "JUDGE_ACCESS_PASSWORD",
-    "JUDGE_SESSION_TTL_HOURS",
-    "COOKIE_SECURE",
-    "LOG_LEVEL",
-]
+from runtime_env_keys import RUNTIME_ENV_KEYS  # noqa: E402 — same list build_web_container_def.py uses for ECS
 
 
 def _collect_runtime_env_vars() -> dict:

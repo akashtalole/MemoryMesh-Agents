@@ -97,17 +97,14 @@ echo "   ECS Express service: ${SERVICE_NAME}"
 echo "   Container port: ${PORT}"
 echo "   AgentCore runtime ARN: ${RUNTIME_ARN}"
 
-# Load .env for COCKROACHDB_URL / JUDGE_ACCESS_PASSWORD / etc, via Python's
-# dotenv parser rather than bash `source` — sourcing .env as a shell script
-# silently mangles any value containing $, `, ", #, spaces, or other
-# shell-special characters (a real problem for a password). Real shell env
-# vars, if you're setting these that way instead, take priority.
+# Fail fast if COCKROACHDB_URL isn't set anywhere — the memory panel needs
+# it, and it's cheap to check now rather than after ECR/CodeBuild/IAM setup
+# below. build_web_container_def.py re-reads .env itself (via python-dotenv,
+# never bash `source`, which mangles values with $, `, ", #, spaces...) and
+# forwards this along with every other RUNTIME_ENV_KEYS entry, so this is
+# just the early check, not the actual source of truth.
 if [ -f .env ]; then
     : "${COCKROACHDB_URL:=$(read_dotenv_var .env COCKROACHDB_URL)}"
-    : "${COCKROACHDB_CLUSTER_ID:=$(read_dotenv_var .env COCKROACHDB_CLUSTER_ID)}"
-    : "${JUDGE_ACCESS_PASSWORD:=$(read_dotenv_var .env JUDGE_ACCESS_PASSWORD)}"
-    : "${JUDGE_SESSION_TTL_HOURS:=$(read_dotenv_var .env JUDGE_SESSION_TTL_HOURS)}"
-    : "${COOKIE_SECURE:=$(read_dotenv_var .env COOKIE_SECURE)}"
 fi
 if [ -z "${COCKROACHDB_URL:-}" ]; then
     echo "❌ COCKROACHDB_URL not set (checked .env and the shell) — the memory"
@@ -388,27 +385,14 @@ if [ "$NEW_ROLE_CREATED" = "1" ]; then
     sleep 15
 fi
 
-# === Container definition, built via python so special characters in
-#     COCKROACHDB_URL (&, ?, =) can't break the JSON ===
+# === Container definition — forwards every RUNTIME_ENV_KEYS entry set in
+#     .env/the shell (COCKROACHDB_MCP_*, COCKROACHDB_CLUSTER_ID, table
+#     names, etc.), the exact same list the AgentCore deploy path uses, so
+#     the two deployments can't silently drift apart on which settings they
+#     forward. Built via python, not bash string interpolation, so special
+#     characters in any value (&, ?, =, quotes...) can't break the JSON. ===
 PRIMARY_CONTAINER_FILE="$(mktemp)"
-python3 - "$IMAGE_URI" "$PORT" "$COCKROACHDB_URL" "$RUNTIME_ARN" "${JUDGE_ACCESS_PASSWORD:-}" "${JUDGE_SESSION_TTL_HOURS:-168}" "${COOKIE_SECURE:-true}" "${COCKROACHDB_CLUSTER_ID:-}" > "$PRIMARY_CONTAINER_FILE" <<'PYEOF'
-import json
-import sys
-
-image, port, db_url, runtime_arn, judge_pw, ttl, cookie_secure, cluster_id = sys.argv[1:9]
-env = [
-    {"name": "COCKROACHDB_URL", "value": db_url},
-    {"name": "AGENTCORE_RUNTIME_ARN", "value": runtime_arn},
-    {"name": "AGENT_BACKEND_MODE", "value": "agentcore"},
-    {"name": "JUDGE_SESSION_TTL_HOURS", "value": ttl},
-    {"name": "COOKIE_SECURE", "value": cookie_secure},
-]
-if judge_pw:
-    env.append({"name": "JUDGE_ACCESS_PASSWORD", "value": judge_pw})
-if cluster_id:
-    env.append({"name": "COCKROACHDB_CLUSTER_ID", "value": cluster_id})
-print(json.dumps({"image": image, "containerPort": int(port), "environment": env}))
-PYEOF
+python3 "${SCRIPT_DIR}/build_web_container_def.py" "$IMAGE_URI" "$PORT" "$RUNTIME_ARN" > "$PRIMARY_CONTAINER_FILE"
 
 # === Create or update the Express Mode service ===
 echo ""
