@@ -16,6 +16,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.utils.winloop import ensure_compatible_event_loop_policy
+
+# Must run before asyncio.run() below creates the event loop — Windows'
+# default ProactorEventLoop rejects psycopg's async driver outright.
+ensure_compatible_event_loop_policy()
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -37,7 +43,11 @@ async def main() -> None:
     logger.info("    done: checkpoints, checkpoint_blobs, checkpoint_writes")
 
     logger.info("2/3 Setting up chat history table (CockroachDBChatMessageHistory)...")
-    get_session_history("schema-init").create_table_if_not_exists()
+    # create_table_if_not_exists() is a sync wrapper that calls asyncio.run()
+    # internally — calling it from here, already inside main()'s running
+    # loop, raises "asyncio.run() cannot be called from a running event
+    # loop". Await the async implementation directly instead.
+    await get_session_history("schema-init")._acreate_table_if_not_exists()
     logger.info("    done: message_store")
 
     logger.info("3/3 Setting up case memory table + distributed C-SPANN vector index...")

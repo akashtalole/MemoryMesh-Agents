@@ -1,4 +1,4 @@
-# MemoryMesh Agents
+# MemoryMesh Agent
 
 **A market-surveillance multi-agent system whose memory never goes down —
 because it isn't in-process, it's CockroachDB.**
@@ -11,6 +11,11 @@ case memory — is backed by [CockroachDB](https://www.cockroachlabs.com/), the
 one system of record in the whole stack. The only AWS service in play is
 [Amazon Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/), used
 purely to host the runtime.
+
+The market-surveillance domain (agent personas, mock data, report schemas)
+is forked from AWS's own public sample,
+["Market Surveillance Agent with LangGraph and Strands on AgentCore"](https://aws.amazon.com/blogs/machine-learning/market-surveillance-agent-with-langgraph-and-strands-on-agentcore/).
+Everything about *memory* and *model inference* is new.
 
 ## Why this is more than "add a database"
 
@@ -167,6 +172,12 @@ to client-side JS. `server/` (FastAPI) exists to:
    memory panel is a live view of the actual tables the agents write to, not
    a mock.
 
+Compare with the reference architecture this project follows —
+["Market Surveillance Agent with LangGraph and Strands on AgentCore"](https://aws.amazon.com/blogs/machine-learning/market-surveillance-agent-with-langgraph-and-strands-on-agentcore/) —
+except the memory layer (previously AgentCore Memory) is now CockroachDB,
+and the model layer (previously Bedrock-hosted Claude) is now Anthropic's
+API called directly from Strands.
+
 ### Specialist agents
 
 | Agent | Focus | Tools |
@@ -220,11 +231,12 @@ API, and there is deliberately no `bedrock:InvokeModel` permission in
 ## Project layout
 
 ```
-memorymesh-agent/
+memorymesh-agents/
 ├── api.py                    # AgentCore entrypoint (BedrockAgentCoreApp)
 ├── app.py                    # Streamlit UI (legacy — quick ops view)
 ├── server/                    # FastAPI: the UI/agent boundary
 │   ├── main.py                    # app wiring, CORS, serves web/dist in prod
+│   ├── auth.py                     # shared-password judge access gate
 │   ├── agent_bridge.py            # local-workflow / AgentCore-proxy, one event stream
 │   ├── chat_routes.py             # POST /api/chat/stream (SSE)
 │   ├── memory_routes.py           # GET /api/memory/* — live reads against CockroachDB
@@ -234,10 +246,10 @@ memorymesh-agent/
 │   └── config.py                  # backend-mode auto-detection
 ├── web/                        # Modern UI: React + Vite + TypeScript + Tailwind
 │   └── src/
-│       ├── App.tsx                 # nav rail + Chat/Dashboard view switch
+│       ├── App.tsx                 # nav rail + Chat/Dashboard view switch + auth gate
 │       ├── lib/useChat.ts          # turns the raw multi-agent event stream into
 │       │                           # a clean answer + a separate agent/tool trace
-│       ├── components/             # ChatPanel, MessageBubble, AgentTrace, MemorySidebar, …
+│       ├── components/             # ChatPanel, MessageBubble, AgentTrace, MemorySidebar, Login, …
 │       │   ├── Dashboard.tsx           # stat tiles, charts, memory map, cases table, health
 │       │   ├── MemoryMap.tsx           # vector memory map + semantic search
 │       │   ├── TimeTravel.tsx          # checkpoint scrubber (History button in Chat)
@@ -261,7 +273,7 @@ memorymesh-agent/
 │   ├── init_memory_schema.py  # create/migrate all CockroachDB memory tables
 │   ├── seed_case_memory.py    # seed a few past cases for an instant demo
 │   └── chat_cli.py            # local chat loop, no AWS required
-└── deployment/                 # AgentCore-only IAM/ECR/runtime scripts
+└── deployment/                 # AgentCore IAM/ECR/runtime scripts (local Docker or AWS CodeBuild)
 ```
 
 ## Setup
@@ -276,12 +288,13 @@ Chat and Dashboard views once it's running). The quick version:
 - Python 3.11+ and Node.js 18+ (for the web UI)
 - An [Anthropic API key](https://console.anthropic.com/)
 - A CockroachDB cluster — [CockroachDB Cloud](https://cockroachlabs.cloud/) (free tier is fine) or local `cockroach demo`
-- For deployment only: AWS CLI v2 with credentials, Docker Desktop (ARM64 build)
+- For deployment only: AWS CLI v2 with credentials, Docker Desktop (ARM64 build) — or skip local Docker entirely with `make deploy-codebuild` (see below)
 
 ### 2. Install
 
 ```bash
-cd memorymesh-agent
+git clone https://github.com/akashtalole/MemoryMesh-Agents.git
+cd MemoryMesh-Agents
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
@@ -332,6 +345,15 @@ provisions the AgentCore runtime. **Set `ANTHROPIC_API_KEY` and
 `COCKROACHDB_URL` as environment variables on the AgentCore runtime** (via
 the AgentCore console or `update_agent_runtime` — they are intentionally not
 baked into the image).
+
+No local Docker? `make deploy-codebuild` does the same thing but builds the
+ARM64 image on AWS CodeBuild's native ARM64 compute instead of emulating it
+locally — see [Setup Guide §8](docs/SETUP_GUIDE.md#8-deploy-to-aws-bedrock-agentcore)
+for details.
+
+Deploying somewhere publicly reachable? Set `JUDGE_ACCESS_PASSWORD` first to
+gate the app behind a single shared password — see
+[Setup Guide, Restricting access before deploying publicly](docs/SETUP_GUIDE.md#restricting-access-before-deploying-publicly).
 
 `deploy-runtime.py` writes the resulting runtime ARN into
 `config/dynamic-config.yaml`, which `server/config.py` reads automatically —
@@ -408,4 +430,4 @@ npx skills add cockroachlabs/cockroachdb-skills
 
 ## License
 
-MIT — see the repository root [LICENSE](../LICENSE).
+MIT — see the [LICENSE](LICENSE) file.

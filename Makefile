@@ -1,4 +1,4 @@
-.PHONY: help deploy destroy start-client prerequisites clean logs status init-memory seed-memory provision-cluster web-install web-dev web-build api-dev dev
+.PHONY: help deploy deploy-codebuild destroy start-client prerequisites clean logs status init-memory seed-memory provision-cluster web-install web-dev web-build api-dev dev
 
 help:
 	@echo "MemoryMesh Agent — CockroachDB memory for LangGraph agents on AWS AgentCore"
@@ -17,7 +17,8 @@ help:
 	@echo "  make seed-memory       - Seed a few historical cases into long-term case memory"
 	@echo ""
 	@echo "AWS AgentCore deployment:"
-	@echo "  make deploy            - Full AgentCore deployment (IAM + ECR + Docker build + runtime)"
+	@echo "  make deploy            - Full AgentCore deployment (IAM + ECR + local Docker build + runtime)"
+	@echo "  make deploy-codebuild  - Same, but builds the ARM64 image on AWS CodeBuild (no local Docker)"
 	@echo "  make prerequisites     - Set up IAM role and ECR only"
 	@echo "  make destroy           - Delete all AgentCore resources"
 	@echo "  make logs              - Tail AgentCore runtime logs"
@@ -66,6 +67,10 @@ seed-memory:
 deploy:
 	@echo "🚀 Running full deployment..."
 	@cd deployment && ./deploy.sh
+
+deploy-codebuild:
+	@echo "🚀 Running full deployment via AWS CodeBuild (no local Docker)..."
+	@cd deployment && ./deploy-codebuild.sh
 
 prerequisites:
 	@echo "🔐 Setting up prerequisites only..."

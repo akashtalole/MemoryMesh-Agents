@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Clock, Database, RotateCcw, Server } from "lucide-react";
+import { Clock, Database, LogOut, RotateCcw, Server } from "lucide-react";
 import type { HealthInfo } from "../types";
 
 interface Props {
@@ -9,9 +9,10 @@ interface Props {
   sessionId?: string | null;
   onNewSession?: () => void;
   onOpenHistory?: () => void;
+  onSignOut?: () => void;
 }
 
-export default function Header({ title, subtitle, health, sessionId, onNewSession, onOpenHistory }: Props) {
+export default function Header({ title, subtitle, health, sessionId, onNewSession, onOpenHistory, onSignOut }: Props) {
   return (
     <header className="flex items-center justify-between border-b border-ink-700 bg-ink-900/80 px-5 py-3 backdrop-blur">
       <div>
@@ -56,6 +57,15 @@ export default function Header({ title, subtitle, health, sessionId, onNewSessio
           >
             <RotateCcw size={13} />
             New session
+          </button>
+        )}
+        {onSignOut && (
+          <button
+            onClick={onSignOut}
+            title="Sign out"
+            className="flex items-center gap-1.5 rounded-lg border border-ink-600 bg-ink-800 px-2.5 py-1.5 text-xs font-medium text-slate-400 transition hover:border-ink-600 hover:bg-ink-700 hover:text-slate-100"
+          >
+            <LogOut size={13} />
           </button>
         )}
       </div>

@@ -105,3 +105,25 @@ export const fetchCheckpointDetail = (sessionId: string, checkpointId: string) =
   getJSON<CheckpointDetail>(
     `/api/sessions/${encodeURIComponent(sessionId)}/checkpoints/${encodeURIComponent(checkpointId)}`
   );
+
+// --- Judge access gate --------------------------------------------------
+
+export const fetchAuthStatus = () => getJSON<{ auth_required: boolean }>("/api/auth/status");
+export const checkAuth = () => getJSON<{ authenticated: boolean }>("/api/auth/check");
+
+export async function login(password: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { ok: false, error: body.detail ?? "Incorrect password" };
+  }
+  return { ok: true };
+}
+
+export async function logout(): Promise<void> {
+  await fetch("/api/auth/logout", { method: "POST" });
+}

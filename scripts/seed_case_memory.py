@@ -13,6 +13,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.utils.winloop import ensure_compatible_event_loop_policy
+
+# Must run before asyncio.run() below creates the event loop — Windows'
+# default ProactorEventLoop rejects psycopg's async driver outright.
+ensure_compatible_event_loop_policy()
+
 from dotenv import load_dotenv
 
 load_dotenv()

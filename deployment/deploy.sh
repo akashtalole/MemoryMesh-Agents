@@ -69,7 +69,7 @@ ROLE_EXISTS=$(aws iam get-role --role-name "${ROLE_NAME}" --region "${REGION}" 2
 
 if echo "$ROLE_EXISTS" | grep -q "NoSuchEntity"; then
     echo "   Creating IAM role: ${ROLE_NAME}"
-    
+
     ROLE_ARN=$(aws iam create-role \
         --role-name "${ROLE_NAME}" \
         --assume-role-policy-document "file://${SCRIPT_DIR}/trust-policy-final.json" \
@@ -77,10 +77,10 @@ if echo "$ROLE_EXISTS" | grep -q "NoSuchEntity"; then
         --region "${REGION}" \
         --query 'Role.Arn' \
         --output text)
-    
+
     if [ $? -eq 0 ]; then
         echo "   ✅ Role created: ${ROLE_ARN}"
-        
+
         # Attach permissions policy
         echo "   Attaching permissions policy..."
         aws iam put-role-policy \
@@ -88,14 +88,14 @@ if echo "$ROLE_EXISTS" | grep -q "NoSuchEntity"; then
             --policy-name "${ROLE_NAME}-permissions" \
             --policy-document "file://${SCRIPT_DIR}/permissions-policy-final.json" \
             --region "${REGION}"
-        
+
         if [ $? -eq 0 ]; then
             echo "   ✅ Permissions policy attached"
         else
             echo "   ❌ Failed to attach permissions policy"
             exit 1
         fi
-        
+
         # Wait for role to propagate
         echo "   ⏳ Waiting for role to propagate (10 seconds)..."
         sleep 10
@@ -138,7 +138,7 @@ fi
 echo ""
 echo "🔨 Building Docker image (ARM64)..."
 cd "${PROJECT_DIR}"
-docker build --no-cache --platform linux/amd64 -t "${ECR_REPO}:latest" .
+docker build --no-cache --platform linux/arm64 -t "${ECR_REPO}:latest" .
 
 if [ $? -eq 0 ]; then
     echo "   ✅ Docker image built successfully"
@@ -199,7 +199,7 @@ if [ $? -eq 0 ]; then
     echo ""
     echo "⚠️  Runtime env vars: set ANTHROPIC_API_KEY and COCKROACHDB_URL on the"
     echo "   AgentCore runtime (see README) — they are not baked into the image."
-    
+
     # Cleanup temporary files
     rm -f "${SCRIPT_DIR}/trust-policy-final.json"
     rm -f "${SCRIPT_DIR}/permissions-policy-final.json"
@@ -207,7 +207,7 @@ else
     echo ""
     echo "❌ Runtime deployment failed"
     echo "Please check the error messages above"
-    
+
     # Cleanup temporary files even on failure
     rm -f "${SCRIPT_DIR}/trust-policy-final.json"
     rm -f "${SCRIPT_DIR}/permissions-policy-final.json"

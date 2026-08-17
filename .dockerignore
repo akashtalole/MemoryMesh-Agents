@@ -1,0 +1,17 @@
+# Never bake local secrets or build artifacts into the image — server/config
+# reads ANTHROPIC_API_KEY/COCKROACHDB_URL from runtime env vars, not from a
+# baked-in .env, so .env has no reason to be inside the container at all.
+.env
+.env.*
+!.env.example
+
+.git
+.venv
+logs/
+__pycache__/
+*.pyc
+
+web/node_modules
+web/dist
+
+config/dynamic-config.yaml

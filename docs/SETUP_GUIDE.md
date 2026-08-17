@@ -18,8 +18,8 @@ architecture and the hackathon write-up, see the [README](../README.md).
 ## 2. Clone and install
 
 ```bash
-git clone <this-repo-url>
-cd MemoryMesh-AI/memorymesh-agent
+git clone https://github.com/akashtalole/MemoryMesh-Agents.git
+cd MemoryMesh-Agents
 
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
@@ -57,6 +57,9 @@ what each one controls:
 | `AGENTCORE_RUNTIME_ARN` | blank | Set once deployed, or leave blank for local dev |
 | `AGENT_BACKEND_MODE` | `auto` | `local` forces in-process; `agentcore` forces proxying; `auto` picks based on whether an ARN is set |
 | `CORS_ORIGINS` | `*` | Tighten this for a real deployment |
+| `JUDGE_ACCESS_PASSWORD` | blank | Shared password gating the app for judges — blank means no login screen at all. See [§8, Restricting access before deploying publicly](#restricting-access-before-deploying-publicly) |
+| `JUDGE_SESSION_TTL_HOURS` | `168` (7 days) | How long a judge's login lasts before the password is asked for again |
+| `COOKIE_SECURE` | `true` | Set to `false` only when testing the login gate over plain HTTP (no TLS) locally |
 | `LOG_LEVEL`, `LOG_TO_CONSOLE`, `LOG_TO_FILE`, `LOG_DIRECTORY` | see `.env.example` | Logging |
 
 ## 4. Provision CockroachDB (skip if you already have a cluster)
@@ -175,13 +178,122 @@ make web-build
 uvicorn server.main:app --host 0.0.0.0 --port 8000
 ```
 
+### Alternative: build via AWS CodeBuild instead of local Docker
+
+`make deploy` builds the ARM64 image locally, which means Docker Desktop
+emulating `linux/arm64` through QEMU if you're on an x86 machine — slow, and
+the most common source of AgentCore build failures/timeouts. If you'd
+rather not deal with local Docker at all:
+
+```bash
+make deploy-codebuild
+```
+
+This runs `deployment/deploy-codebuild.sh`, which does everything `make
+deploy` does, except the image is built on **AWS CodeBuild's native ARM64
+compute** (`aws/codebuild/amazonlinux2-aarch64-standard`) instead of on your
+machine — no emulation, no local Docker install required at all. Source
+comes straight from this repo on GitHub
+(`https://github.com/akashtalole/MemoryMesh-Agents`, `main` branch by
+default) — CodeBuild clones it directly, so **this builds whatever's
+currently pushed to GitHub, not your local working copy**. Push your changes
+first (override the repo/branch with the `GITHUB_REPO_URL` / `GITHUB_BRANCH`
+env vars if you're deploying from a fork or a different branch). Concretely,
+it:
+
+1. Runs the same IAM-role + ECR-repo prerequisites as `make deploy`
+   (`deployment/prerequisites.sh`)
+2. Creates (or updates) a CodeBuild project with a `GITHUB` source pointed
+   at that repo/branch, and a narrowly-scoped service role — separate from
+   the AgentCore runtime role, permitted only to push to that one ECR
+   repository
+3. Starts a build using `buildspec.yml` (repo root) — `docker login` to ECR,
+   `docker build` (no `--platform` flag needed, the compute is already
+   ARM64), `docker push` — and polls until it finishes, printing the
+   CloudWatch log location on failure
+4. Runs the same `deployment/deploy-runtime.py` as `make deploy` to create
+   or update the AgentCore runtime with the freshly-pushed image
+
+**One-time setup, before the first run:** CodeBuild's `GITHUB` source type
+needs a GitHub source credential registered for your AWS account/region —
+this is required even for a public repo, since it's how CodeBuild identifies
+itself to GitHub. Either connect once via the console (CodeBuild → Settings
+→ Source providers → Connect to GitHub) or run:
+
+```bash
+aws codebuild import-source-credentials --server-type GITHUB \
+  --auth-type PERSONAL_ACCESS_TOKEN --token <your-github-PAT>
+```
+
+The script detects a missing credential and prints this same instruction if
+you skip it and run `make deploy-codebuild` first.
+
+Everything else — setting `ANTHROPIC_API_KEY`/`COCKROACHDB_URL` on the
+runtime after deploying, `make status`/`make logs`/`make destroy` — works
+identically regardless of which path built the image, since both just push
+to the same ECR repo.
+
+One-time AWS cost note: this adds a CodeBuild project, billed per build
+minute (first 100 minutes/month free on `BUILD_GENERAL1_SMALL`) — negligible
+for occasional hackathon-scale deploys.
+
+### Restricting access before deploying publicly
+
+If this deployment is reachable from the open internet, anyone who finds
+the URL can run up your Anthropic API bill — the chat endpoint calls the
+model on every message. Set one env var before deploying to gate the whole
+app behind a single shared password (see `server/auth.py`):
+
+```bash
+JUDGE_ACCESS_PASSWORD=some-password-you-hand-to-judges
+```
+
+Leave it unset for local dev — the gate is a complete no-op when it's
+empty, so `make dev` stays open with no extra step. Once set, every `/api/*`
+route except `/api/auth/*` and `/api/health` requires it; the frontend shows
+a password screen automatically. Sessions last `JUDGE_SESSION_TTL_HOURS`
+(default 7 days) and are stored in a signed cookie — rotating the password
+(change the env var, redeploy) instantly invalidates every existing
+session, since the signing key is derived from the password itself. There
+are no accounts and nothing to provision; this is a judging-window gate,
+not a real auth system.
+
+**What a judge sees, end to end:**
+
+1. Open the deployed URL. If `JUDGE_ACCESS_PASSWORD` is set, a single
+   password field is shown instead of the app (nothing else loads first —
+   no flash of the chat UI before the check completes).
+2. Enter the password you handed out and submit. On success, a session
+   cookie is set and the full app (Chat + Dashboard) loads immediately.
+3. The session persists across page reloads and browser restarts for
+   `JUDGE_SESSION_TTL_HOURS` — a judge only enters the password once per
+   session lifetime, not on every visit.
+4. A **Log Out** button in the header (top-right, next to the CockroachDB/
+   AgentCore status badges) clears the session and returns to the password
+   screen; useful for testing the login flow itself before sharing the URL.
+
+**Testing the gate yourself before sharing the URL with judges:**
+
+```bash
+JUDGE_ACCESS_PASSWORD=test-password make dev   # or set it in .env
+```
+
+Open http://localhost:5173 — you should see the password screen instead of
+the app. Log in with `test-password`, confirm the app loads and Log Out
+returns you to the password screen, then set the real password for the
+actual deployment. If cookies won't set locally over plain `http://`, add
+`COOKIE_SECURE=false` to `.env` for this local check only — keep it `true`
+(the default) for the real deployment, which should be HTTPS.
+
 ## 9. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `RuntimeError: ANTHROPIC_API_KEY is not set` | `.env` not loaded or key missing | Confirm `.env` exists in `memorymesh-agent/` and the key is set |
+| `RuntimeError: ANTHROPIC_API_KEY is not set` | `.env` not loaded or key missing | Confirm `.env` exists and the key is set |
 | Header shows "CockroachDB offline" | Bad `COCKROACHDB_URL`, or cluster unreachable | Test with `psql "$COCKROACHDB_URL" -c "SELECT 1"` |
 | Dashboard's Vector Memory Map is empty | No cases in `case_memory` yet | Run `make seed-memory`, or just chat a few times — every finished investigation writes itself into memory |
 | `memory_ops` agent answers "MCP tools unavailable" | `COCKROACHDB_MCP_API_KEY` unset | Optional integration — create a service-account key in Cloud Console → Access → Service Accounts, or ignore it |
 | `make deploy` fails at Docker build | Not building for ARM64, or Docker Desktop not running | AgentCore requires `--platform linux/arm64`; the script already passes this — make sure Docker Desktop is running with buildx support |
+| Login screen loops / rejects the correct password | `JUDGE_ACCESS_PASSWORD` differs between what you typed and what's set on the running server, or the cookie can't be set | Double-check the env var on the actual running process (not just your local `.env`); if testing over plain HTTP, set `COOKIE_SECURE=false` — browsers refuse `Secure` cookies on non-HTTPS origins |
+| Logged in, but everything still 401s | Cookie blocked by browser (third-party cookie settings) or by CORS | Confirm the frontend and API are same-origin (the normal setup — one FastAPI process serving both); cross-origin needs `CORS_ORIGINS` set to the exact frontend origin, not `*`, since credentialed CORS requests can't use a wildcard |
 | Deployed runtime returns errors immediately | `ANTHROPIC_API_KEY` / `COCKROACHDB_URL` not set on the runtime | Set them as runtime env vars post-deploy — they're never baked into the image |

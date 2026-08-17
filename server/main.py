@@ -17,9 +17,16 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+
+from src.utils.winloop import ensure_compatible_event_loop_policy
+
+# Must run before uvicorn (or anything else) creates the event loop —
+# Windows' default ProactorEventLoop rejects psycopg's async driver outright.
+ensure_compatible_event_loop_policy()
 
 load_dotenv()
 
@@ -29,6 +36,8 @@ configure_logging(force_console=True)
 logger = logging.getLogger(__name__)
 
 from server.agent_bridge import AgentCoreBridge, LocalWorkflowBridge  # noqa: E402
+from server.auth import auth_enabled, is_path_open, request_is_authenticated  # noqa: E402
+from server.auth import router as auth_router  # noqa: E402
 from server.chat_routes import router as chat_router  # noqa: E402
 from server.checkpoint_routes import router as checkpoint_router  # noqa: E402
 from server.config import get_backend_mode, get_region, get_runtime_arn  # noqa: E402
@@ -56,8 +65,26 @@ app.add_middleware(
     allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_credentials=True,
 )
 
+if auth_enabled():
+    logger.info("Judge access gate ENABLED — JUDGE_ACCESS_PASSWORD is set")
+else:
+    logger.info("Judge access gate disabled (JUDGE_ACCESS_PASSWORD not set) — API is open")
+
+
+@app.middleware("http")
+async def judge_access_gate(request: Request, call_next):
+    """Blocks every /api/* route except /api/auth/* and /api/health behind
+    the shared judge password — see server/auth.py. A no-op when
+    JUDGE_ACCESS_PASSWORD isn't set."""
+    if is_path_open(request.url.path) or request_is_authenticated(request):
+        return await call_next(request)
+    return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+
+
+app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(memory_router)
 app.include_router(checkpoint_router)

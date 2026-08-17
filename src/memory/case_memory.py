@@ -38,12 +38,13 @@ async def init_case_memory() -> AsyncCockroachDBVectorStore:
     global _vectorstore
 
     engine = get_engine()
+    # ainit_vectorstore_table() only creates the table/columns — distance
+    # strategy is a property of the vector store and index below, not the
+    # table itself (an unrelated distance_strategy=/overwrite_existing= pair
+    # here would raise a TypeError since neither is a real parameter).
     await engine.ainit_vectorstore_table(
         table_name=CASE_MEMORY_TABLE,
         vector_dimension=get_embedding_dimension(),
-        distance_strategy=DistanceStrategy.COSINE,
-        overwrite_existing=False,
-        drop_if_exists=False,
     )
 
     _vectorstore = AsyncCockroachDBVectorStore(
@@ -115,16 +116,23 @@ async def recall_similar_cases(
     )
 
     try:
-        results = await vectorstore.asimilarity_search_with_relevance_scores(
-            query_text, k=k, score_threshold=score_threshold
-        )
+        # asimilarity_search_with_relevance_scores() raises NotImplementedError
+        # on this vector store (verified against langchain-cockroachdb==0.3.0 —
+        # _select_relevance_score_fn is unimplemented). asimilarity_search_with_score()
+        # returns plain cosine *distance* (lower = closer) instead, since the
+        # store is built with DistanceStrategy.COSINE; convert to a similarity
+        # score ourselves and apply the threshold manually.
+        raw_results = await vectorstore.asimilarity_search_with_score(query_text, k=k)
     except Exception as e:
         logger.warning(f"Case memory recall failed, continuing without prior context: {e}")
         return []
 
+    results = [(doc, 1.0 - float(distance)) for doc, distance in raw_results]
+    results = [(doc, score) for doc, score in results if score >= score_threshold]
+
     return [
         {
-            "score": round(float(score), 4),
+            "score": round(score, 4),
             "case_id": doc.metadata.get("case_id"),
             "query": doc.metadata.get("query"),
             "recorded_at": doc.metadata.get("recorded_at"),
