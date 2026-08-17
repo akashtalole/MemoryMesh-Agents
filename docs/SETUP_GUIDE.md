@@ -314,7 +314,69 @@ actual deployment. If cookies won't set locally over plain `http://`, add
 `COOKIE_SECURE=false` to `.env` for this local check only — keep it `true`
 (the default) for the real deployment, which should be HTTPS.
 
-## 9. Troubleshooting
+## 9. Host the web UI publicly (Amazon ECS Express Mode)
+
+Everything above deploys the AgentCore **runtime** — the piece that runs the
+LangGraph workflow. It has no browsable URL: `invoke_agent_runtime` requires
+SigV4-signed requests, not a raw browser request. To give judges (or anyone)
+something to actually click, the FastAPI + React app (`server/`, `web/`)
+needs to run somewhere public, configured to proxy chat requests to that
+already-deployed runtime.
+
+```bash
+make deploy-web
+```
+
+This runs `deployment/deploy-ecs-web.sh`, which builds `Dockerfile.web` (a
+separate image from the AgentCore one — Node build of the React UI, then
+Python/uvicorn serving both the API and the built frontend) via CodeBuild,
+and deploys it to **Amazon ECS Express Mode**: one command that provisions a
+Fargate service, an internet-facing Application Load Balancer with
+automatic HTTPS, and autoscaling — no VPC/ALB/target-group setup by hand.
+
+We use ECS Express Mode rather than AWS App Runner because **App Runner is
+closed to new customers** as of this writing (existing App Runner customers
+can keep using it as normal). Express Mode is AWS's own recommended
+replacement for exactly this "simple public container" use case.
+
+**Prerequisites:**
+- The AgentCore runtime must already be deployed (`make deploy` or `make
+  deploy-codebuild`) — this script reads the runtime ARN straight out of
+  `config/dynamic-config.yaml`.
+- `.env` needs at least `COCKROACHDB_URL` set. `ANTHROPIC_API_KEY` is **not**
+  needed for this deployment — this service only proxies to the AgentCore
+  runtime (`AGENT_BACKEND_MODE=agentcore`), it never runs the workflow
+  itself.
+- Same GitHub-source requirement as `make deploy-codebuild`: it builds
+  whatever's pushed to `GITHUB_REPO_URL`/`GITHUB_BRANCH` (defaults to this
+  repo's `main`), not local edits, and needs the same one-time CodeBuild
+  GitHub source credential (see §8 above) if you haven't set that up yet.
+
+The script also creates three IAM roles on first run (all safe to reuse
+across future deploys/services): `ecsTaskExecutionRole` (pulls the image,
+writes logs — the standard ECS role), `ecsInfrastructureRoleForExpressServices`
+(lets Express Mode provision the load balancer/networking on your behalf),
+and `memorymesh-agent-web-task-role` (the running container's *own* AWS
+permissions — scoped to just `bedrock-agentcore:InvokeAgentRuntime` on this
+one runtime ARN, nothing else).
+
+When it finishes, your app is live at:
+
+```
+https://<service-name>.ecs.<region>.on.aws/
+```
+
+(printed at the end of the script — DNS/certificate propagation can take a
+minute or two after the service reaches `ACTIVE`). Deployed this way, you
+get the exact same `JUDGE_ACCESS_PASSWORD` gate described above — it reads
+from the same `.env`, so set it before your first `make deploy-web` if you
+want the app gated from the moment it goes live.
+
+Redeploying after a code change: push to GitHub, then `make deploy-web`
+again — it detects the existing service and updates it in place with the
+freshly-built image, rather than creating a second one.
+
+## 10. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
@@ -325,4 +387,6 @@ actual deployment. If cookies won't set locally over plain `http://`, add
 | `make deploy` fails at Docker build | Not building for ARM64, or Docker Desktop not running | AgentCore requires `--platform linux/arm64`; the script already passes this — make sure Docker Desktop is running with buildx support |
 | Login screen loops / rejects the correct password | `JUDGE_ACCESS_PASSWORD` differs between what you typed and what's set on the running server, or the cookie can't be set | Double-check the env var on the actual running process (not just your local `.env`); if testing over plain HTTP, set `COOKIE_SECURE=false` — browsers refuse `Secure` cookies on non-HTTPS origins |
 | Logged in, but everything still 401s | Cookie blocked by browser (third-party cookie settings) or by CORS | Confirm the frontend and API are same-origin (the normal setup — one FastAPI process serving both); cross-origin needs `CORS_ORIGINS` set to the exact frontend origin, not `*`, since credentialed CORS requests can't use a wildcard |
+| `make deploy-web` fails before starting the build | `config/dynamic-config.yaml` missing or has no runtime ARN | Deploy the AgentCore runtime first (`make deploy` or `make deploy-codebuild`) |
+| Web UI loads but chat requests fail with an AWS permissions error | The `memorymesh-agent-web-task-role` policy doesn't cover the actual runtime/endpoint ARN being invoked | Check the resource in the IAM error message against the task role's policy (`aws iam get-role-policy --role-name memorymesh-agent-web-task-role --policy-name memorymesh-agent-web-task-role-permissions`) and widen it if needed |
 | Deployed runtime returns errors immediately | `ANTHROPIC_API_KEY` / `COCKROACHDB_URL` not set on the runtime | Set them as runtime env vars post-deploy — they're never baked into the image |

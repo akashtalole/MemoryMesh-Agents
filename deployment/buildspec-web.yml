@@ -1,0 +1,26 @@
+version: 0.2
+
+# Builds the public-facing web app image (server/ + web/, via Dockerfile.web)
+# for Amazon ECS Express Mode — a plain x86_64 build (Fargate Express Mode's
+# default architecture), unlike buildspec.yml which builds the ARM64
+# AgentCore runtime image from the root Dockerfile.
+#
+# Expects these environment variables on the CodeBuild project:
+#   AWS_ACCOUNT_ID, AWS_DEFAULT_REGION, IMAGE_REPO_NAME
+
+phases:
+  pre_build:
+    commands:
+      - echo "Logging in to Amazon ECR..."
+      - aws ecr get-login-password --region "$AWS_DEFAULT_REGION" | docker login --username AWS --password-stdin "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com"
+      - REPO_URI="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME"
+  build:
+    commands:
+      - echo "Building the web app image..."
+      - docker build -f Dockerfile.web -t "$IMAGE_REPO_NAME:latest" .
+      - docker tag "$IMAGE_REPO_NAME:latest" "$REPO_URI:latest"
+  post_build:
+    commands:
+      - echo "Pushing image to ECR..."
+      - docker push "$REPO_URI:latest"
+      - echo "Pushed $REPO_URI:latest"

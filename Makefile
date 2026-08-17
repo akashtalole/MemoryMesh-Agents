@@ -1,4 +1,4 @@
-.PHONY: help deploy deploy-codebuild deploy-cloudshell destroy start-client prerequisites clean logs status init-memory seed-memory provision-cluster web-install web-dev web-build api-dev dev
+.PHONY: help deploy deploy-codebuild deploy-cloudshell deploy-web destroy start-client prerequisites clean logs status init-memory seed-memory provision-cluster web-install web-dev web-build api-dev dev
 
 help:
 	@echo "MemoryMesh Agent — CockroachDB memory for LangGraph agents on AWS AgentCore"
@@ -24,6 +24,9 @@ help:
 	@echo "  make destroy           - Delete all AgentCore resources"
 	@echo "  make logs              - Tail AgentCore runtime logs"
 	@echo "  make status            - Check deployment status"
+	@echo ""
+	@echo "Public web UI (separate from the AgentCore runtime above):"
+	@echo "  make deploy-web        - Deploy server/+web/ to Amazon ECS Express Mode (public HTTPS URL)"
 	@echo ""
 	@echo "Other:"
 	@echo "  make start-client      - Start the legacy Streamlit UI (ops quick-look)"
@@ -76,6 +79,10 @@ deploy-codebuild:
 deploy-cloudshell:
 	@echo "🚀 Running one-shot deployment for AWS CloudShell..."
 	@bash deployment/cloudshell_deploy.sh
+
+deploy-web:
+	@echo "🚀 Deploying the web UI to Amazon ECS Express Mode..."
+	@bash deployment/deploy-ecs-web.sh
 
 prerequisites:
 	@echo "🔐 Setting up prerequisites only..."

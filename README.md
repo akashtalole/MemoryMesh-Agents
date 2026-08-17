@@ -371,6 +371,24 @@ uvicorn server.main:app --host 0.0.0.0 --port 8000   # serves API + built UI tog
 The legacy Streamlit view (`make start-client`, `:8501`) still works as a
 quick ops look at the same AgentCore runtime.
 
+### 7. Host the web UI publicly
+
+The AgentCore runtime above has no browsable URL — it only accepts
+SigV4-signed requests. To give judges (or anyone) a public link:
+
+```bash
+make deploy-web
+```
+
+Builds `Dockerfile.web` (server/ + web/, separate from the AgentCore image)
+via CodeBuild and deploys it to **Amazon ECS Express Mode** — one command,
+a Fargate service + load-balanced HTTPS URL + autoscaling, no manual
+VPC/ALB setup. (We use ECS Express Mode rather than AWS App Runner because
+App Runner is closed to new customers as of this writing — Express Mode is
+AWS's own recommended replacement.) See
+[Setup Guide §9](docs/SETUP_GUIDE.md#9-host-the-web-ui-publicly-amazon-ecs-express-mode)
+for the full walkthrough, prerequisites, and IAM roles it creates.
+
 ## Sample queries
 
 ```text
