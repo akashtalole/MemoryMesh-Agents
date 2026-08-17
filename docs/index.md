@@ -3,8 +3,6 @@
 **A market-surveillance multi-agent system whose memory never goes down —
 because it isn't in-process, it's CockroachDB.**
 
-📖 **[Full documentation site](https://akashtalole.github.io/MemoryMesh-Agents/)**
-
 Built for the [🪳 CockroachDB × AWS Hackathon](https://cockroachdb-ai.devpost.com/).
 LangGraph orchestrates a team of [Strands Agents](https://github.com/strands-agents/sdk-python)
 (reasoning via Anthropic's API directly), and every layer of memory —
@@ -219,7 +217,8 @@ We also point contributors at the
 [CockroachDB Agent Skills Repo](https://github.com/cockroachlabs/cockroachdb-skills)
 (`npx skills add cockroachlabs/cockroachdb-skills`) for anyone doing
 schema/ops work on this project with Claude Code, Cursor, or another
-MCP-compatible client — see [CONTRIBUTING](#contributing-cockroachdb-skills) below.
+MCP-compatible client — see [Contributing](#contributing-cockroachdb-skills)
+below.
 
 ## AWS services used
 
@@ -228,7 +227,7 @@ workflow in a `BedrockAgentCoreApp` entrypoint; `deployment/` builds the
 container, pushes it to ECR, and provisions an AgentCore Runtime + endpoint.
 No other AWS service is used — model inference goes straight to Anthropic's
 API, and there is deliberately no `bedrock:InvokeModel` permission in
-[`deployment/permissions-policy.json`](deployment/permissions-policy.json).
+[`deployment/permissions-policy.json`](https://github.com/akashtalole/MemoryMesh-Agents/blob/main/deployment/permissions-policy.json).
 
 ## Project layout
 
@@ -280,10 +279,10 @@ memorymesh-agents/
 
 ## Setup
 
-For a longer walkthrough, see the dedicated
-[Setup Guide](docs/SETUP_GUIDE.md) (every `.env` variable explained,
-troubleshooting table) and [User Guide](docs/USER_GUIDE.md) (how to use the
-Chat and Dashboard views once it's running). The quick version:
+For a longer walkthrough, see the dedicated [Setup Guide](SETUP_GUIDE.md)
+(every `.env` variable explained, troubleshooting table) and
+[User Guide](USER_GUIDE.md) (how to use the Chat and Dashboard views once
+it's running). The quick version:
 
 ### 1. Prerequisites
 
@@ -350,12 +349,14 @@ baked into the image).
 
 No local Docker? `make deploy-codebuild` does the same thing but builds the
 ARM64 image on AWS CodeBuild's native ARM64 compute instead of emulating it
-locally — see [Setup Guide §8](docs/SETUP_GUIDE.md#8-deploy-to-aws-bedrock-agentcore)
-for details.
+locally — see [Setup Guide §8](SETUP_GUIDE.md#8-deploy-to-aws-bedrock-agentcore)
+for details. In a hurry and deploying from AWS CloudShell? `make
+deploy-cloudshell` does the whole thing — build, deploy, and wiring the
+runtime's env vars — in one command.
 
 Deploying somewhere publicly reachable? Set `JUDGE_ACCESS_PASSWORD` first to
 gate the app behind a single shared password — see
-[Setup Guide, Restricting access before deploying publicly](docs/SETUP_GUIDE.md#restricting-access-before-deploying-publicly).
+[Setup Guide, Restricting access before deploying publicly](SETUP_GUIDE.md#restricting-access-before-deploying-publicly).
 
 `deploy-runtime.py` writes the resulting runtime ARN into
 `config/dynamic-config.yaml`, which `server/config.py` reads automatically —
@@ -432,4 +433,4 @@ npx skills add cockroachlabs/cockroachdb-skills
 
 ## License
 
-MIT — see the [LICENSE](LICENSE) file.
+MIT — see the [LICENSE](https://github.com/akashtalole/MemoryMesh-Agents/blob/main/LICENSE) file.

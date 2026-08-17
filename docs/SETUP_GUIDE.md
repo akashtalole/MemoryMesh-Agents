@@ -3,7 +3,7 @@
 Step-by-step instructions for getting MemoryMesh Agent running, from a clean
 checkout to a local demo to an AWS AgentCore deployment. For what the app
 actually does once it's running, see [`USER_GUIDE.md`](USER_GUIDE.md). For
-architecture and the hackathon write-up, see the [README](../README.md).
+architecture and the hackathon write-up, see the [Home page](index.md).
 
 ## 1. Prerequisites
 
