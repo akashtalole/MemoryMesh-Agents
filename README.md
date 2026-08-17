@@ -10,9 +10,11 @@ LangGraph orchestrates a team of [Strands Agents](https://github.com/strands-age
 (reasoning via Anthropic's API directly), and every layer of memory —
 short-term conversation state, durable audit history, and long-term semantic
 case memory — is backed by [CockroachDB](https://www.cockroachlabs.com/), the
-one system of record in the whole stack. The only AWS service in play is
-[Amazon Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/), used
-purely to host the runtime.
+one system of record in the whole stack. Model inference never touches AWS:
+[Amazon Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/) hosts
+the runtime, and a small supporting cast of AWS services (CodeBuild, ECR,
+ECS, IAM) handles build automation and hosting — see
+["AWS services used"](#aws-services-used) below.
 
 The market-surveillance domain (agent personas, mock data, report schemas)
 is forked from AWS's own public sample,
@@ -67,7 +69,7 @@ flowchart TB
     FAPI -->|"deployed: boto3 invoke_agent_runtime"| AC
     FAPI -->|"read-only SELECTs"| CRDB
 
-    subgraph AC["Amazon Bedrock AgentCore Runtime (the only AWS service used)"]
+    subgraph AC["Amazon Bedrock AgentCore Runtime (hosting only, no inference)"]
         API["api.py — BedrockAgentCoreApp entrypoint"]
         WF["LangGraph workflow (workflow.py)"]
         API --> WF
@@ -223,12 +225,33 @@ MCP-compatible client — see [CONTRIBUTING](#contributing-cockroachdb-skills) b
 
 ## AWS services used
 
-**Amazon Bedrock AgentCore** — and only that. `api.py` wraps the LangGraph
-workflow in a `BedrockAgentCoreApp` entrypoint; `deployment/` builds the
-container, pushes it to ECR, and provisions an AgentCore Runtime + endpoint.
-No other AWS service is used — model inference goes straight to Anthropic's
-API, and there is deliberately no `bedrock:InvokeModel` permission in
-[`deployment/permissions-policy.json`](deployment/permissions-policy.json).
+**Amazon Bedrock AgentCore hosts the agent runtime — and only the runtime.**
+`api.py` wraps the LangGraph workflow in a `BedrockAgentCoreApp` entrypoint.
+Model inference never touches Bedrock: every Strands agent calls Anthropic's
+API directly, and there is deliberately no `bedrock:InvokeModel` permission
+in [`deployment/permissions-policy.json`](deployment/permissions-policy.json).
+
+A small supporting cast of AWS services handles build automation and
+hosting around that runtime, none of which are in the inference path:
+
+- **AWS CodeBuild** builds the ARM64 container natively (no local Docker or
+  QEMU) straight from this GitHub repo — see
+  [`deployment/deploy-codebuild.sh`](deployment/deploy-codebuild.sh), which
+  also runs unattended from a stock **AWS CloudShell** session via
+  [`deployment/cloudshell_deploy.sh`](deployment/cloudshell_deploy.sh) for a
+  one-command deploy with nothing installed locally.
+- **Amazon ECR** stores the built container images (one repo for the
+  AgentCore runtime, one for the web UI).
+- **IAM** roles gate every step above, each scoped to only what that step
+  needs — see [`deployment/permissions-policy.json`](deployment/permissions-policy.json).
+- **Amazon ECS Express Mode** optionally hosts the public FastAPI + React
+  web UI as a Fargate service behind an internet-facing ALB with automatic
+  HTTPS — see "7. Host the web UI publicly" below. (We originally scoped
+  this as AWS App Runner, but App Runner is closed to new customers as of
+  2025, so ECS Express Mode is the direct replacement AWS itself documents.)
+
+None of the above ever calls a model. Inference is 100% Anthropic API,
+end to end.
 
 ## Project layout
 
