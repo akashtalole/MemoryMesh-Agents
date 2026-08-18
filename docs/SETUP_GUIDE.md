@@ -45,7 +45,8 @@ what each one controls:
 |---|---|---|
 | `ANTHROPIC_API_KEY` | — (required) | Agent reasoning |
 | `ANTHROPIC_MODEL_ID` | `claude-sonnet-4-6` | Model used by every Strands agent |
-| `COCKROACHDB_URL` | local insecure | Connection string for every memory table |
+| `COCKROACHDB_URL` | local insecure | Connection string for every memory table. CockroachDB Cloud's own copy-paste string uses `sslmode=verify-full`, which needs a CA cert (see `COCKROACHDB_CLUSTER_ID` below); `sslmode=require` (TLS, no chain verification) is a simpler, well-accepted fallback if you hit certificate errors — see [§10](#10-troubleshooting) |
+| `COCKROACHDB_CLUSTER_ID` | blank | Only matters with `sslmode=verify-full`/`verify-ca`. The UUID from your cluster's Console → Connect → `curl .../clusters/<id>/cert` snippet. When set, both Dockerfiles bake that cluster's CA cert into the image at build time, and `src/memory/db.py` also falls back to downloading it at runtime if it's missing — see [§10](#10-troubleshooting) |
 | `COCKROACHDB_POOL_SIZE` / `COCKROACHDB_POOL_MAX_OVERFLOW` | `10` / `20` | Connection pool sizing |
 | `COCKROACHDB_CHAT_HISTORY_TABLE` | `message_store` | Audit-log table name |
 | `COCKROACHDB_CASE_MEMORY_TABLE` | `case_memory` | Vector-memory table name |
@@ -130,6 +131,51 @@ make start-client    # legacy Streamlit UI on :8501
 If the CockroachDB badge is red, double check `COCKROACHDB_URL` and that
 your cluster is reachable (`psql "$COCKROACHDB_URL" -c "SELECT 1"` is a
 quick way to test the connection string outside the app).
+
+## Deployment architecture, at a glance
+
+Steps 8 and 9 below stand up two independent things — the agent runtime and
+a public web UI in front of it — both built the same way (source pulled
+straight from GitHub, built on AWS CodeBuild, no local Docker required):
+
+```mermaid
+flowchart TB
+    REPO["GitHub — this repo"]
+
+    subgraph BUILD["AWS CodeBuild — native compute, no local Docker/QEMU"]
+        CB1["buildspec.yml (ARM64)\nbuilds Dockerfile → AgentCore image"]
+        CB2["buildspec-web.yml (x86_64)\nbuilds Dockerfile.web → web UI image"]
+    end
+    REPO -->|clone at build time| CB1
+    REPO -->|clone at build time| CB2
+
+    CB1 -->|docker push| ECR1[("Amazon ECR\nagentcore-repo")]
+    CB2 -->|docker push| ECR2[("Amazon ECR\nweb-repo")]
+
+    ECR1 -->|"deploy-runtime.py\ncreate/update_agent_runtime"| AC
+    ECR2 -->|"deploy-ecs-web.sh\ncreate/update-express-gateway-service"| ECS
+
+    subgraph AC["Amazon Bedrock AgentCore Runtime"]
+        WF["LangGraph workflow (api.py)\nno public URL — SigV4 invoke only"]
+    end
+
+    subgraph ECS["Amazon ECS Express Mode"]
+        WEB["FastAPI + React UI (server/main.py)\nFargate + ALB, automatic HTTPS"]
+    end
+
+    JUDGE["Judge's browser"] -->|"https://‹service›.ecs.‹region›.on.aws/"| WEB
+    WEB -->|"boto3 invoke_agent_runtime (SigV4)"| AC
+    WEB -->|"direct SQL — /api/health, /api/memory/stats"| CRDB
+    AC -->|"checkpoints · chat history · case memory + C-SPANN"| CRDB[("CockroachDB Cloud")]
+
+    CLOUDSHELL["AWS CloudShell\ncloudshell_deploy.sh"] -.->|"one-shot wrapper"| CB1
+```
+
+Both images bake in the AgentCore/ECS task's `COCKROACHDB_CLUSTER_ID` CA
+cert at build time if it's set (see the SSL notes under
+[§3](#3-configure-env) and [§10](#10-troubleshooting)) — the only thing
+that differs between the two deploys is which container gets built and
+where it ends up running.
 
 ## 8. Deploy to AWS Bedrock AgentCore
 
@@ -389,4 +435,6 @@ freshly-built image, rather than creating a second one.
 | Logged in, but everything still 401s | Cookie blocked by browser (third-party cookie settings) or by CORS | Confirm the frontend and API are same-origin (the normal setup — one FastAPI process serving both); cross-origin needs `CORS_ORIGINS` set to the exact frontend origin, not `*`, since credentialed CORS requests can't use a wildcard |
 | `make deploy-web` fails before starting the build | `config/dynamic-config.yaml` missing or has no runtime ARN | Deploy the AgentCore runtime first (`make deploy` or `make deploy-codebuild`) |
 | Web UI loads but chat requests fail with an AWS permissions error | The `memorymesh-agent-web-task-role` policy doesn't cover the actual runtime/endpoint ARN being invoked | Check the resource in the IAM error message against the task role's policy (`aws iam get-role-policy --role-name memorymesh-agent-web-task-role --policy-name memorymesh-agent-web-task-role-permissions`) and widen it if needed |
+| `cockroachdb_error`: `root certificate file "...postgresql/root.crt" does not exist` | `COCKROACHDB_URL` uses `sslmode=verify-full`/`verify-ca` with no CA cert available in the container | Set `COCKROACHDB_CLUSTER_ID` in `.env` and redeploy — this bakes the cluster's CA cert into the image at build time (both Dockerfiles) and also covers it with a runtime download as a fallback |
+| `cockroachdb_error`: `SSL error: certificate verify failed` (even with `COCKROACHDB_CLUSTER_ID` set) | The cert itself is correct, but the cluster's TLS proxy isn't sending its full certificate chain (missing intermediate) during the handshake — a server-side issue, not a client config problem. Confirm from an environment with cluster network access: `openssl s_client -connect <host>:26257 -starttls postgres -showcerts \| grep -A2 "Certificate chain"` | Simplest unblock: switch `COCKROACHDB_URL`'s `sslmode=verify-full` to `sslmode=require` — still encrypts the connection, just skips chain verification. A well-accepted tradeoff for reaching a known CockroachDB Cloud endpoint |
 | Deployed runtime returns errors immediately | `ANTHROPIC_API_KEY` / `COCKROACHDB_URL` not set on the runtime | Set them as runtime env vars post-deploy — they're never baked into the image |

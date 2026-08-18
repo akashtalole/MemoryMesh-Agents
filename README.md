@@ -253,6 +253,48 @@ hosting around that runtime, none of which are in the inference path:
 None of the above ever calls a model. Inference is 100% Anthropic API,
 end to end.
 
+### Deployment topology
+
+Two independent deploys, both built from this same GitHub repo on AWS
+CodeBuild — no local Docker required for either one:
+
+```mermaid
+flowchart TB
+    REPO["GitHub — this repo"]
+
+    subgraph BUILD["AWS CodeBuild — native compute, no local Docker/QEMU"]
+        CB1["buildspec.yml (ARM64)\nbuilds Dockerfile → AgentCore image"]
+        CB2["buildspec-web.yml (x86_64)\nbuilds Dockerfile.web → web UI image"]
+    end
+    REPO -->|clone at build time| CB1
+    REPO -->|clone at build time| CB2
+
+    CB1 -->|docker push| ECR1[("Amazon ECR\nagentcore-repo")]
+    CB2 -->|docker push| ECR2[("Amazon ECR\nweb-repo")]
+
+    ECR1 -->|"deploy-runtime.py"| AC
+    ECR2 -->|"deploy-ecs-web.sh"| ECS
+
+    subgraph AC["Amazon Bedrock AgentCore Runtime"]
+        WF["LangGraph workflow (api.py)\nno public URL — SigV4 invoke only"]
+    end
+
+    subgraph ECS["Amazon ECS Express Mode"]
+        WEB["FastAPI + React UI (server/main.py)\nFargate + ALB, automatic HTTPS"]
+    end
+
+    JUDGE["Judge's browser"] -->|"https://‹service›.ecs.‹region›.on.aws/"| WEB
+    WEB -->|"boto3 invoke_agent_runtime (SigV4)"| AC
+    WEB -->|"direct SQL — /api/health, /api/memory/stats"| CRDB
+    AC -->|"checkpoints · chat history · case memory + C-SPANN"| CRDB[("CockroachDB Cloud")]
+
+    CLOUDSHELL["AWS CloudShell\ncloudshell_deploy.sh"] -.->|"one-shot wrapper"| CB1
+```
+
+Full walkthrough of both paths, including the one-time GitHub source-credential
+setup and IAM roles each one creates: [Setup Guide §8](docs/SETUP_GUIDE.md#8-deploy-to-aws-bedrock-agentcore)
+and [§9](docs/SETUP_GUIDE.md#9-host-the-web-ui-publicly-amazon-ecs-express-mode).
+
 ## Project layout
 
 ```
