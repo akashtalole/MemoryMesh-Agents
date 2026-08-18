@@ -1,14 +1,16 @@
 """
 MemoryMesh Agent — AWS Bedrock AgentCore entrypoint.
 
-AgentCore is the *only* AWS service this project uses, and only for hosting:
-it runs this container as a managed runtime and exposes it over the
-bedrock-agentcore invoke API. Model reasoning goes straight to Anthropic's
+AgentCore hosts this container as a managed runtime and exposes it over the
+bedrock-agentcore invoke API — that's its only job; CodeBuild/ECR/ECS/IAM
+handle build and hosting automation elsewhere in deployment/, and none of
+it is in the inference path. Model reasoning goes straight to Anthropic's
 API (Strands `AnthropicModel`); all persistent memory — checkpoints, chat
 history, long-term case memory — lives in CockroachDB.
 """
 
 import asyncio
+import json
 import logging
 from typing import Optional
 
@@ -63,7 +65,12 @@ async def memorymesh_workflow(payload):
               compatibility with the upstream AgentCore Memory sample
 
     Yields:
-        SSE-formatted streaming response chunks.
+        Event dicts (e.g. {"type": "text", ...}, {"type": "agent_execution", ...}) —
+        NOT pre-formatted SSE strings. BedrockAgentCoreApp does its own
+        SSE encoding on whatever this generator yields; yielding an
+        already-"data: ...\\n\\n"-formatted string double-wraps it (see the
+        comment below) and silently breaks every event the deployed UI
+        relies on.
     """
     try:
         prompt = payload.get("prompt")
@@ -73,17 +80,35 @@ async def memorymesh_workflow(payload):
         logger.info(f"Workflow invocation - session: {session_id}, actor: {actor_id}")
 
         if not prompt:
-            yield "Error: No prompt provided in payload"
+            yield {"type": "error", "content": "No prompt provided in payload"}
             return
 
         workflow = await get_workflow()
-        async for chunk in workflow.stream_query(session_id=session_id, prompt=prompt, actor_id=actor_id):
-            yield chunk
+        async for raw_chunk in workflow.stream_query(session_id=session_id, prompt=prompt, actor_id=actor_id):
+            # stream_query() yields pre-formatted SSE lines ("data: {...}\n\n")
+            # because its other callers (LocalWorkflowBridge, chat_cli.py)
+            # parse that exact format themselves. BedrockAgentCoreApp does
+            # its OWN SSE encoding on whatever this generator yields —
+            # json.dumps() + "data: ...\n\n" — so yielding the already-
+            # formatted string here double-wraps it: the deployed runtime
+            # ends up sending a JSON string *literal* containing the
+            # original SSE line, which the client parses into a plain
+            # string instead of an event object, so every field the UI
+            # looks for (evt.type, evt.content, ...) is undefined and
+            # nothing ever renders. Unwrap back to the raw event dict
+            # before yielding so AgentCore only wraps it once.
+            unwrapped = raw_chunk[len("data: "):].strip() if raw_chunk.startswith("data: ") else raw_chunk.strip()
+            if not unwrapped:
+                continue
+            try:
+                yield json.loads(unwrapped)
+            except json.JSONDecodeError:
+                yield {"type": "raw", "content": unwrapped}
 
     except Exception as e:
         error_msg = f"Error in workflow execution: {str(e)}"
         logger.error(error_msg)
-        yield error_msg
+        yield {"type": "error", "content": error_msg}
 
 
 if __name__ == "__main__":
